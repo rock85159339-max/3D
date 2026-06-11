@@ -174,6 +174,7 @@ function makeEditableGeometry(mesh) {
 }
 
 function readTriangle(geometry, faceIndex) {
+  if (!geometry?.attributes?.position) return null;
   const position = geometry.attributes.position;
   const offset = faceIndex * 9;
   if (!position || offset + 8 >= position.array.length) return null;
@@ -187,6 +188,12 @@ function readTriangle(geometry, faceIndex) {
 
 function setPositionAt(attribute, index, point) {
   attribute.setXYZ(index, point.x, point.y, point.z);
+}
+
+function getFalloffWeight(distance, radius, falloff) {
+  const t = THREE.MathUtils.clamp(1 - distance / Math.max(radius, 0.001), 0, 1);
+  if (falloff === 'linear') return t;
+  return t * t * (3 - 2 * t);
 }
 
 function createShape(type, index = 0) {
@@ -600,6 +607,7 @@ export default function App() {
   const selectionHelpersRef = useRef([]);
   const faceHelperRef = useRef(null);
   const normalArrowRef = useRef(null);
+  const brushPreviewRef = useRef(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
   const objectsRef = useRef([]);
@@ -608,6 +616,10 @@ export default function App() {
   const selectionGroupRef = useRef(null);
   const currentFaceRef = useRef(null);
   const editModeRef = useRef('object');
+  const sculptSettingsRef = useRef({ brushMode: 'raise', radius: 15, strength: 0.35, falloff: 'smooth' });
+  const sculptActiveRef = useRef(false);
+  const sculptSnapshotRef = useRef(null);
+  const sculptChangedRef = useRef(false);
   const modeRef = useRef('translate');
   const snapRef = useRef(true);
   const multiSelectRef = useRef(false);
@@ -621,6 +633,7 @@ export default function App() {
   const [editMode, setEditMode] = useState('object');
   const [faceSelection, setFaceSelection] = useState(null);
   const [faceSettings, setFaceSettings] = useState({ distance: 5, radius: 20, softEdit: false, smoothStrength: 0.5 });
+  const [sculptSettings, setSculptSettings] = useState({ brushMode: 'raise', radius: 15, strength: 0.35, falloff: 'smooth' });
   const [mode, setMode] = useState('translate');
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [multiSelect, setMultiSelect] = useState(false);
@@ -694,6 +707,11 @@ export default function App() {
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      if (editModeRef.current === 'sculpt') {
+        if (event.button !== 0) return;
+        beginSculptStroke();
+        return;
+      }
       if (editModeRef.current === 'face') {
         pickFaceFromPointer();
         return;
@@ -709,7 +727,30 @@ export default function App() {
       updateSelection(root, multiSelectRef.current || event.shiftKey);
     };
 
+    const onPointerMove = (event) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      if (editModeRef.current !== 'sculpt') return;
+      continueSculptStroke();
+    };
+
+    const onPointerUp = () => {
+      if (editModeRef.current === 'sculpt') endSculptStroke();
+    };
+
+    const onPointerLeave = () => {
+      if (editModeRef.current === 'sculpt') {
+        hideBrushPreview();
+        endSculptStroke();
+      }
+    };
+
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('pointerleave', onPointerLeave);
 
     const resize = () => {
       const width = mount.clientWidth;
@@ -733,6 +774,10 @@ export default function App() {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', resize);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      clearBrushPreview();
       transform.dispose();
       orbit.dispose();
       disposeObject(scene);
@@ -765,16 +810,26 @@ export default function App() {
     editModeRef.current = editMode;
     const transform = transformRef.current;
     if (!transform) return;
-    if (editMode === 'face') {
+    if (editMode === 'face' || editMode === 'sculpt') {
       if (!selectedIdsRef.current.length) showToast('請先選取一個 mesh 物件');
       transform.detach();
       detachSelectionGroup();
+      if (editMode === 'face') hideBrushPreview();
+      if (editMode === 'sculpt') clearFaceHelper();
       setSelected(primarySelected ? readTransform(primarySelected) : null);
     } else {
       clearFaceHelper();
+      hideBrushPreview();
+      endSculptStroke();
       attachTransformForSelection(selectedIdsRef.current);
     }
   }, [editMode]);
+
+  useEffect(() => {
+    sculptSettingsRef.current = sculptSettings;
+    const hit = editModeRef.current === 'sculpt' ? getSculptHit() : null;
+    if (hit) updateBrushPreview(hit);
+  }, [sculptSettings]);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -832,6 +887,9 @@ export default function App() {
     if (!snapshot) return;
     detachSelectionGroup();
     clearSelectionHelpers();
+    clearFaceHelper();
+    hideBrushPreview();
+    endSculptStroke();
     objectsRef.current.forEach((object) => {
       sceneRef.current.remove(object);
       disposeObject(object);
@@ -910,6 +968,80 @@ export default function App() {
     setFaceSelection(null);
   }
 
+  function ensureBrushPreview() {
+    const scene = sceneRef.current;
+    if (!scene) return null;
+    if (brushPreviewRef.current) return brushPreviewRef.current;
+    const points = [];
+    for (let i = 0; i < 96; i += 1) {
+      const angle = (i / 96) * Math.PI * 2;
+      points.push(new THREE.Vector3(Math.cos(angle), Math.sin(angle), 0));
+    }
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.9,
+      depthTest: false,
+    });
+    const preview = new THREE.LineLoop(geometry, material);
+    preview.visible = false;
+    preview.renderOrder = 30;
+    preview.userData.helper = true;
+    scene.add(preview);
+    brushPreviewRef.current = preview;
+    return preview;
+  }
+
+  function hideBrushPreview() {
+    if (brushPreviewRef.current) brushPreviewRef.current.visible = false;
+  }
+
+  function clearBrushPreview() {
+    const scene = sceneRef.current;
+    if (!scene || !brushPreviewRef.current) return;
+    scene.remove(brushPreviewRef.current);
+    brushPreviewRef.current.geometry?.dispose?.();
+    brushPreviewRef.current.material?.dispose?.();
+    brushPreviewRef.current = null;
+  }
+
+  function getSculptTarget() {
+    const root = objectsRef.current.find((object) => object.uuid === selectedIdsRef.current[0]);
+    if (!root) return { root: null, meshes: [] };
+    return { root, meshes: getPrintableMeshes(root) };
+  }
+
+  function getSculptHit() {
+    const { root, meshes } = getSculptTarget();
+    if (!root || !meshes.length) return null;
+    const hits = raycasterRef.current.intersectObjects(meshes, false);
+    return hits[0] || null;
+  }
+
+  function updateBrushPreview(hit) {
+    const preview = ensureBrushPreview();
+    if (!preview || !hit?.object || hit.faceIndex == null) {
+      hideBrushPreview();
+      return;
+    }
+    const mesh = hit.object;
+    const geometry = makeEditableGeometry(mesh);
+    const triangle = readTriangle(geometry, hit.faceIndex);
+    if (!triangle) {
+      hideBrushPreview();
+      return;
+    }
+    mesh.updateWorldMatrix(true, false);
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
+    const worldNormal = triangle.normal.clone().applyMatrix3(normalMatrix).normalize();
+    preview.position.copy(hit.point).addScaledVector(worldNormal, 0.35);
+    preview.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), worldNormal);
+    const radius = Math.max(0.5, Number(sculptSettingsRef.current.radius) || 15);
+    preview.scale.set(radius, radius, radius);
+    preview.visible = true;
+  }
+
   function showFaceHelper(mesh, faceIndex) {
     const scene = sceneRef.current;
     if (!scene || !mesh) return;
@@ -977,6 +1109,110 @@ export default function App() {
     }
     makeEditableGeometry(hit.object);
     showFaceHelper(hit.object, hit.faceIndex);
+  }
+
+  function applySculptStroke(hit) {
+    if (!hit?.object || hit.faceIndex == null) return false;
+    const mesh = hit.object;
+    const geometry = makeEditableGeometry(mesh);
+    const triangle = readTriangle(geometry, hit.faceIndex);
+    if (!triangle) return false;
+
+    const settings = sculptSettingsRef.current;
+    const radius = Math.max(0.5, Number(settings.radius) || 15);
+    const strength = THREE.MathUtils.clamp(Number(settings.strength) || 0, 0, 1);
+    if (strength <= 0) return false;
+
+    const position = geometry.attributes.position;
+    const normalAttribute = geometry.attributes.normal;
+    const localPoint = mesh.worldToLocal(hit.point.clone());
+    const brushNormal = triangle.normal.clone().normalize();
+    const deltaDistance = radius * 0.075 * strength;
+    const affected = [];
+
+    for (let i = 0; i < position.count; i += 1) {
+      const vertex = new THREE.Vector3().fromBufferAttribute(position, i);
+      const distance = vertex.distanceTo(localPoint);
+      if (distance > radius) continue;
+      const weight = getFalloffWeight(distance, radius, settings.falloff);
+      if (weight <= 0) continue;
+      affected.push({ index: i, vertex, distance, weight });
+    }
+    if (!affected.length) return false;
+
+    if (settings.brushMode === 'smooth') {
+      const vertices = [];
+      for (let i = 0; i < position.count; i += 1) vertices.push(new THREE.Vector3().fromBufferAttribute(position, i));
+      affected.forEach(({ index, vertex, weight }) => {
+        const nearby = vertices.filter((candidate) => candidate.distanceTo(vertex) <= radius * 0.45);
+        if (nearby.length < 2) return;
+        const average = nearby.reduce((sum, candidate) => sum.add(candidate), new THREE.Vector3()).multiplyScalar(1 / nearby.length);
+        setPositionAt(position, index, vertex.clone().lerp(average, strength * weight * 0.6));
+      });
+    } else if (settings.brushMode === 'flatten') {
+      affected.forEach(({ index, vertex, weight }) => {
+        const offset = vertex.clone().sub(localPoint).dot(brushNormal);
+        const next = vertex.clone().addScaledVector(brushNormal, -offset * weight * strength);
+        setPositionAt(position, index, next);
+      });
+    } else {
+      affected.forEach(({ index, vertex, weight }) => {
+        let direction = brushNormal;
+        let sign = 1;
+        if (settings.brushMode === 'lower') sign = -1;
+        if (settings.brushMode === 'inflate' && normalAttribute) {
+          direction = new THREE.Vector3().fromBufferAttribute(normalAttribute, index).normalize();
+        }
+        const next = vertex.clone().addScaledVector(direction, deltaDistance * weight * sign);
+        setPositionAt(position, index, next);
+      });
+    }
+
+    updateEditedMesh(mesh);
+    sculptChangedRef.current = true;
+    return true;
+  }
+
+  function beginSculptStroke() {
+    const { root } = getSculptTarget();
+    if (!root) {
+      showToast('請先選取要雕刻的物件');
+      return;
+    }
+    const hit = getSculptHit();
+    if (!hit?.object) {
+      hideBrushPreview();
+      return;
+    }
+    makeEditableGeometry(hit.object);
+    sculptActiveRef.current = true;
+    sculptChangedRef.current = false;
+    sculptSnapshotRef.current = makeSnapshot();
+    if (orbitRef.current) orbitRef.current.enabled = false;
+    updateBrushPreview(hit);
+    applySculptStroke(hit);
+  }
+
+  function continueSculptStroke() {
+    const hit = getSculptHit();
+    updateBrushPreview(hit);
+    if (!sculptActiveRef.current || !hit?.object) return;
+    applySculptStroke(hit);
+  }
+
+  function endSculptStroke() {
+    if (!sculptActiveRef.current) return;
+    sculptActiveRef.current = false;
+    if (orbitRef.current) orbitRef.current.enabled = true;
+    if (sculptChangedRef.current && sculptSnapshotRef.current) {
+      historyRef.current.push(sculptSnapshotRef.current);
+      if (historyRef.current.length > 80) historyRef.current.shift();
+      redoRef.current = [];
+      setHistoryVersion((version) => version + 1);
+      showToast('已完成雕刻筆刷');
+    }
+    sculptSnapshotRef.current = null;
+    sculptChangedRef.current = false;
   }
 
   function updateSelectionHelpers(selectedItems) {
@@ -1555,6 +1791,7 @@ export default function App() {
           <button onClick={redo} disabled={!redoRef.current.length}>重做 Redo</button>
           <button onClick={() => setEditMode('object')} className={editMode === 'object' ? 'active' : ''}>Object Mode</button>
           <button onClick={() => setEditMode('face')} className={editMode === 'face' ? 'active' : ''}>Face Mode</button>
+          <button onClick={() => setEditMode('sculpt')} className={editMode === 'sculpt' ? 'active' : ''}>Sculpt Mode</button>
           <button onClick={() => setMultiSelect((value) => !value)} className={multiSelect ? 'active' : ''}>多選</button>
           <button onClick={() => addShape('cube')}><Box size={18} />新增</button>
           <button onClick={duplicateSelected} disabled={!selectedIds.length}><Copy size={18} />複製</button>
@@ -1648,7 +1885,7 @@ export default function App() {
         <div className="viewport-topbar">
           <span>{objects.length} objects</span>
           <span>{selectedIds.length} selected</span>
-          <span>{editMode === 'face' ? 'Face Mode' : 'Object Mode'}</span>
+          <span>{editMode === 'face' ? 'Face Mode' : editMode === 'sculpt' ? 'Sculpt Mode' : 'Object Mode'}</span>
           <span>{printerSize.x} x {printerSize.y} x {printerSize.z} mm</span>
           <span>{selected ? selected.name : '未選取物件'}</span>
         </div>
@@ -1692,6 +1929,12 @@ export default function App() {
             onPull={() => moveSelectedFace(1)}
             onPush={() => moveSelectedFace(-1)}
             onSmooth={smoothSelectedFace}
+          />
+        ) : editMode === 'sculpt' ? (
+          <SculptPanel
+            settings={sculptSettings}
+            onSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
+            hasSelection={!!primarySelected}
           />
         ) : selected ? (
           <div className="property-stack">
@@ -1761,6 +2004,39 @@ function FaceEditPanel({ faceSelection, settings, onSettingChange, onPull, onPus
           <button onClick={onPush} disabled={!faceSelection}>向內推入</button>
         </div>
         <button className="wide-action" onClick={onSmooth} disabled={!faceSelection}>平滑選取區域</button>
+      </section>
+    </div>
+  );
+}
+
+function SculptPanel({ settings, onSettingChange, hasSelection }) {
+  return (
+    <div className="property-stack">
+      <section className="printer-card sculpt-card">
+        <div className="card-title">雕刻模式</div>
+        {!hasSelection && <div className="notice warning-note">請先選取要雕刻的物件。</div>}
+        <label className="field">
+          <span>筆刷</span>
+          <select value={settings.brushMode} onChange={(event) => onSettingChange('brushMode', event.target.value)}>
+            <option value="raise">Raise 推起</option>
+            <option value="lower">Lower 壓下</option>
+            <option value="smooth">Smooth 平滑</option>
+            <option value="inflate">Inflate 膨脹</option>
+            <option value="flatten">Flatten 壓平</option>
+          </select>
+        </label>
+        <div className="row-fields">
+          <label className="field"><span>半徑 mm</span><input type="number" step="1" min="1" value={settings.radius} onChange={(event) => onSettingChange('radius', event.target.value)} /></label>
+          <label className="field"><span>強度</span><input type="number" step="0.05" min="0" max="1" value={settings.strength} onChange={(event) => onSettingChange('strength', event.target.value)} /></label>
+        </div>
+        <label className="field">
+          <span>衰減 Falloff</span>
+          <select value={settings.falloff} onChange={(event) => onSettingChange('falloff', event.target.value)}>
+            <option value="smooth">Smooth</option>
+            <option value="linear">Linear</option>
+          </select>
+        </label>
+        <div className="notice">按住滑鼠左鍵在模型表面拖曳，即可雕刻。</div>
       </section>
     </div>
   );

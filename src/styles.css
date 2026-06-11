@@ -426,6 +426,16 @@ input[type="color"] {
   gap: 12px;
 }
 
+.sculpt-card {
+  gap: 12px;
+}
+
+.warning-note {
+  border-color: #f97316;
+  color: #fed7aa;
+  background: rgba(67, 32, 12, 0.42);
+}
+
 .action-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
