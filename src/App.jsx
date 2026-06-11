@@ -21,6 +21,7 @@ import {
   Scale,
   Trash2,
   Type,
+  Wrench,
 } from 'lucide-react';
 import './styles.css';
 import LeftPanel from './components/LeftPanel.jsx';
@@ -91,6 +92,14 @@ const MODE_BUTTONS = [
   { mode: 'translate', label: '移動', icon: Move3D },
   { mode: 'rotate', label: '旋轉', icon: RotateCw },
   { mode: 'scale', label: '縮放', icon: Scale },
+];
+
+const WORKFLOW_TABS = [
+  { key: 'model', label: '建立', icon: Box },
+  { key: 'face', label: '編輯', icon: Move3D },
+  { key: 'sculpt', label: '雕刻', icon: RotateCw },
+  { key: 'prep', label: '修復', icon: Wrench },
+  { key: 'export', label: '匯出', icon: Download },
 ];
 
 const palette = [0x22c55e, 0x38bdf8, 0xf97316, 0xe879f9, 0xfacc15, 0xa78bfa];
@@ -2826,23 +2835,11 @@ export default function App() {
           <input className="project-name-input" value={projectName} onChange={(event) => setProjectName(event.target.value || 'Untitled Model')} />
           <span>{lastAutosave ? `Autosaved ${lastAutosave}` : 'Autosave ready'}</span>
         </div>
-        <div className="workflow-bar">
-          {[
-            ['model', '1. 建立模型'],
-            ['face', '2. 編輯形狀'],
-            ['sculpt', '3. 雕刻'],
-            ['prep', '4. 列印準備'],
-            ['export', '5. 匯出'],
-          ].map(([key, label]) => (
-            <button key={key} className={activeWorkflow === key ? 'active' : ''} onClick={() => switchWorkflow(key)}>{label}</button>
-          ))}
-        </div>
         <div className="toolbar-group">
           <button onClick={undo} disabled={!historyRef.current.length}>復原 Undo</button>
           <button onClick={redo} disabled={!redoRef.current.length}>重做 Redo</button>
           <button className="danger" onClick={deleteSelectedWithConfirm} disabled={!selectedIds.length}><Trash2 size={18} />Delete</button>
           <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={loadProjectFile} />
-          <button onClick={resetCameraView}>重設視角</button>
           <button onClick={() => setShowPreferences((value) => !value)}>Preferences</button>
         </div>
         <label className="switch-control">
@@ -2856,6 +2853,18 @@ export default function App() {
           </select>
         </label>
       </TopToolbar>
+
+      <nav className="workflow-tabs">
+        {WORKFLOW_TABS.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button key={tab.key} className={activeWorkflow === tab.key ? 'active' : ''} onClick={() => switchWorkflow(tab.key)}>
+              <Icon size={17} />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </nav>
 
       {showGuide && (
         <GuidePanel
@@ -2878,32 +2887,40 @@ export default function App() {
       )}
 
       <LeftPanel>
-        <div className="brand"><span className="brand-mark">mm</span><span>Print Modeler</span></div>
-        <div className="tool-section">
-          <span className="section-label">解析度</span>
-          <div className="segmented text-segmented">
-            {Object.entries(RESOLUTION_PRESETS).map(([key, preset]) => (
-              <button key={key} className={shapeResolution === key ? 'active' : ''} onClick={() => setShapeResolution(key)}>{preset.label}</button>
-            ))}
+        <div className="brand compact-brand"><span className="brand-mark">mm</span><span>工具箱</span></div>
+        {activeWorkflow === 'model' ? (
+          <>
+            <div className="tool-section">
+              <span className="section-label">解析度</span>
+              <div className="segmented text-segmented resolution-toggle">
+                {Object.entries(RESOLUTION_PRESETS).map(([key, preset]) => (
+                  <button key={key} className={shapeResolution === key ? 'active' : ''} onClick={() => setShapeResolution(key)}>{preset.label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="tool-section">
+              <span className="section-label">基本形狀</span>
+              {Object.entries(SHAPES).map(([type, shape]) => {
+                const Icon = shape.icon;
+                return <button key={type} className="tool-button primary-tool" onClick={() => addShape(type)}><Icon size={20} /><span>{shape.label}</span></button>;
+              })}
+              <button className="tool-button primary-tool" onClick={addText}><Type size={20} /><span>文字</span></button>
+            </div>
+          </>
+        ) : (
+          <div className="tool-section workflow-hint">
+            <span className="section-label">{WORKFLOW_TABS.find((tab) => tab.key === activeWorkflow)?.label} 工具</span>
+            {activeWorkflow === 'face' && <p>請在模型表面點選一個面，右側可推拉、軟編輯與平滑。</p>}
+            {activeWorkflow === 'sculpt' && <p>選擇筆刷後，在模型表面按住左鍵拖曳即可雕刻。</p>}
+            {activeWorkflow === 'prep' && <p>使用右側 Print Prep / Mesh Repair 工具檢查、修復與封口模型。</p>}
+            {activeWorkflow === 'export' && <p>請先 Check Mesh，再匯出 STL 進行 3D 列印。</p>}
           </div>
-        </div>
-        <div className="tool-section">
-          <span className="section-label">基本形狀</span>
-          {Object.entries(SHAPES).map(([type, shape]) => {
-            const Icon = shape.icon;
-            return <button key={type} className="tool-button" onClick={() => addShape(type)}><Icon size={20} /><span>{shape.label}</span></button>;
-          })}
-          <button className="tool-button" onClick={addText}><Type size={20} /><span>文字</span></button>
-        </div>
+        )}
       </LeftPanel>
 
       <section className="viewport-wrap">
-        <div className="viewport-topbar">
-          <span>{objects.length} objects</span>
-          <span>{selectedIds.length} selected</span>
-          <span>{editMode === 'face' ? 'Face Mode' : editMode === 'sculpt' ? 'Sculpt Mode' : 'Object Mode'}</span>
-          <span>{printerSize.x} x {printerSize.y} x {printerSize.z} mm</span>
-          <span>{selected ? selected.name : '未選取物件'}</span>
+        <div className="viewport-hud">
+          Objects: {objects.length} <span>|</span> Selected: {selectedIds.length} <span>|</span> Mode: {editMode === 'face' ? 'Face' : editMode === 'sculpt' ? 'Sculpt' : 'Object'} <span>|</span> Printer: {printerSize.x}³ mm
         </div>
         <div ref={mountRef} className="three-viewport" />
         <ViewCube cameraProjection={cameraProjection} onView={setCameraView} onToggleProjection={toggleProjection} />
@@ -2912,20 +2929,8 @@ export default function App() {
       </section>
 
       <RightPanel>
-        <div className="panel-header">
-          <h1>屬性</h1>
-          <span>{selectedIds.length} selected</span>
-        </div>
-        <div className="printer-card">
-          <div className="card-title">列印平台</div>
-          <div className="platform-size">{printerSize.x} x {printerSize.y} x {printerSize.z} mm</div>
-          {printerKey === 'custom' && (
-            <TransformFields title="自訂尺寸" unit="mm" data={customSize} onChange={(axis, value) => setCustomSize((size) => ({ ...size, [axis]: Math.max(10, Number(value) || 10) }))} step="1" />
-          )}
-        </div>
-
-        <section className="printer-card">
-          <div className="card-title">Outliner</div>
+        <section className="sidebar-section outliner-section">
+          <div className="sidebar-title"><span>Outliner</span><small>{objects.length} objects</small></div>
           <Outliner
             objects={objects}
             selectedIds={selectedIds}
@@ -2936,64 +2941,91 @@ export default function App() {
           />
         </section>
 
-        {activeWorkflow === 'prep' ? (
-          <PrintPrepPanel
-            settings={printPrepSettings}
-            onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
-            onSubdivide={subdivideSelectedModel}
-            onSmooth={smoothSelectedModel}
-            onRecalculate={recalculateSelectedNormals}
-            onRemesh={remeshSelectedModel}
-            onPlace={placeSelectedOnBed}
-            onCenter={centerSelectedOnBed}
-            onApplyTransform={applySelectedTransform}
-            onCheck={checkSelectedMesh}
-            planeCutSettings={planeCutSettings}
-            onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
-            onPlaneCut={applyPlaneCut}
-            repairSettings={meshRepairSettings}
-            onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
-            onFindHoles={findSelectedHoles}
-            onFillHoles={fillSelectedHoles}
-            onMergeCloseVertices={mergeSelectedCloseVertices}
-            onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
-            onRemoveLooseFaces={removeSelectedLooseFaces}
-            onAutoRepair={autoRepairSelectedMesh}
-            repairResult={meshRepairResult}
-            results={meshCheckResults}
-            disabled={!primarySelected}
-          />
-        ) : activeWorkflow === 'export' ? (
-          <ExportPanel
-            onExportStl={() => exportModel('stl')}
-            onExportObj={() => exportModel('obj')}
-            onSave={saveProject}
-            onLoad={() => fileInputRef.current?.click()}
-            hasObjects={objects.length > 0}
-            checkResults={meshCheckResults}
-          />
-        ) : activeWorkflow === 'face' ? (
-          <FaceEditPanel
-            faceSelection={faceSelection}
-            settings={faceSettings}
-            onSettingChange={(key, value) => setFaceSettings((settings) => ({ ...settings, [key]: value }))}
-            onPull={() => moveSelectedFace(1)}
-            onPush={() => moveSelectedFace(-1)}
-            onSmooth={smoothSelectedFace}
-          />
-        ) : activeWorkflow === 'sculpt' ? (
-          <SculptPanel
-            settings={sculptSettings}
-            onSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
-            hasSelection={!!primarySelected}
-          />
-        ) : selected ? (
-          <div className="property-stack">
+        <section className="sidebar-section properties-section">
+          <div className="sidebar-title"><span>Properties / Tool Settings</span><small>{selectedIds.length} selected</small></div>
+          <details className="accordion-panel" open>
+            <summary>列印平台</summary>
+            <div className="platform-size">{printerSize.x} x {printerSize.y} x {printerSize.z} mm</div>
+            {printerKey === 'custom' && (
+              <TransformFields title="自訂尺寸" unit="mm" data={customSize} onChange={(axis, value) => setCustomSize((size) => ({ ...size, [axis]: Math.max(10, Number(value) || 10) }))} step="1" />
+            )}
+          </details>
+
+          {activeWorkflow === 'prep' ? (
+            <details className="accordion-panel" open>
+              <summary>Print Prep / Mesh Repair</summary>
+              <PrintPrepPanel
+                settings={printPrepSettings}
+                onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
+                onSubdivide={subdivideSelectedModel}
+                onSmooth={smoothSelectedModel}
+                onRecalculate={recalculateSelectedNormals}
+                onRemesh={remeshSelectedModel}
+                onPlace={placeSelectedOnBed}
+                onCenter={centerSelectedOnBed}
+                onApplyTransform={applySelectedTransform}
+                onCheck={checkSelectedMesh}
+                planeCutSettings={planeCutSettings}
+                onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
+                onPlaneCut={applyPlaneCut}
+                repairSettings={meshRepairSettings}
+                onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
+                onFindHoles={findSelectedHoles}
+                onFillHoles={fillSelectedHoles}
+                onMergeCloseVertices={mergeSelectedCloseVertices}
+                onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
+                onRemoveLooseFaces={removeSelectedLooseFaces}
+                onAutoRepair={autoRepairSelectedMesh}
+                repairResult={meshRepairResult}
+                results={meshCheckResults}
+                disabled={!primarySelected}
+              />
+            </details>
+          ) : activeWorkflow === 'export' ? (
+            <details className="accordion-panel" open>
+              <summary>Export</summary>
+              <ExportPanel
+                onExportStl={() => exportModel('stl')}
+                onExportObj={() => exportModel('obj')}
+                onSave={saveProject}
+                onLoad={() => fileInputRef.current?.click()}
+                hasObjects={objects.length > 0}
+                checkResults={meshCheckResults}
+              />
+            </details>
+          ) : activeWorkflow === 'face' ? (
+            <details className="accordion-panel" open>
+              <summary>Face Edit</summary>
+              <FaceEditPanel
+                faceSelection={faceSelection}
+                settings={faceSettings}
+                onSettingChange={(key, value) => setFaceSettings((settings) => ({ ...settings, [key]: value }))}
+                onPull={() => moveSelectedFace(1)}
+                onPush={() => moveSelectedFace(-1)}
+                onSmooth={smoothSelectedFace}
+              />
+            </details>
+          ) : activeWorkflow === 'sculpt' ? (
+            <details className="accordion-panel" open>
+              <summary>Sculpt Brush</summary>
+              <SculptPanel
+                settings={sculptSettings}
+                onSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
+                hasSelection={!!primarySelected}
+              />
+            </details>
+          ) : selected ? (
+            <div className="property-stack">
+            <details className="accordion-panel" open>
+              <summary>物件屬性</summary>
             <label className="field"><span>名稱</span><input value={primarySelected?.name || selected.name} onChange={(event) => updateSelected('name', null, event.target.value)} /></label>
             <div className="row-fields">
               <label className="field"><span>物件模式</span><select value={primarySelected?.userData.mode || 'solid'} onChange={(event) => updateSelected('mode', null, event.target.value)}><option value="solid">Solid</option><option value="hole">Hole</option></select></label>
               <label className="field"><span>顏色</span><input type="color" value={primarySelected?.userData.color || '#38bdf8'} onChange={(event) => updateSelected('color', null, event.target.value)} /></label>
             </div>
+            </details>
+            <details className="accordion-panel" open>
+              <summary>Object Tools</summary>
             <ObjectToolsPanel
               mode={mode}
               setMode={setMode}
@@ -3024,17 +3056,25 @@ export default function App() {
               }}
             />
             <div className="notice">Hole 物件不會被列印，只用來切掉 Solid。</div>
+            </details>
+            <details className="accordion-panel" open>
+              <summary>Transform</summary>
             <TransformFields title="位置" unit="mm" data={selected.position} onChange={(axis, value) => updateSelected('position', axis, value)} />
             <TransformFields title="旋轉" unit="deg" data={selected.rotation} onChange={(axis, value) => updateSelected('rotation', axis, value)} step="15" />
             <TransformFields title="實際尺寸" unit="mm" data={selected.dimensions} onChange={(axis, value) => updateSelected('dimensions', axis, value)} step="1" labels={{ x: '寬 X', y: '深 Y', z: '高 Z' }} />
             {selected.shapeType === 'cube' && <BevelFields selected={selected} onChange={updateSelected} />}
             {selected.shapeType === 'text' && <TextFields selected={selected} onChange={updateSelected} />}
             {booleanMessage && <div className="notice">{booleanMessage}</div>}
+            </details>
+            <details className="accordion-panel">
+              <summary>Print Check</summary>
             <PrintCheckPanel check={selectedCheck} stats={printStats} />
+            </details>
           </div>
         ) : (
           <div className="empty-state"><Move3D size={32} /><p>請選取物件</p></div>
         )}
+        </section>
       </RightPanel>
       <StatusBar
         workflow={activeWorkflow}

@@ -99,23 +99,23 @@ select {
 .app-shell {
   display: grid;
   grid-template-columns: 226px minmax(0, 1fr) 340px;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
-  background: #0d1118;
+  background: #090d13;
 }
 
 .top-toolbar {
   grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   min-width: 0;
-  padding: 8px 12px;
-  border-bottom: 1px solid #273243;
-  background: #121924;
+  padding: 8px 14px;
+  border-bottom: 1px solid #1f2a38;
+  background: #111722;
 }
 
 .project-strip {
@@ -153,6 +153,47 @@ select {
   background: #0f1722;
 }
 
+.workflow-tabs {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid #1f2a38;
+  background: #0d141f;
+}
+
+.workflow-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  min-width: 112px;
+  border: 1px solid #263244;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px;
+  color: #b7c6d8;
+  background: #121a27;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.workflow-tabs button:hover {
+  border-color: #36506a;
+  color: #f8fafc;
+  background: #172235;
+}
+
+.workflow-tabs button.active {
+  border-color: #38bdf8;
+  border-bottom-color: #facc15;
+  color: #f8fafc;
+  background: #193149;
+  box-shadow: inset 0 -2px 0 #facc15;
+}
+
 .toolbar-group {
   display: flex;
   flex-wrap: wrap;
@@ -173,6 +214,15 @@ select {
   color: #d9e7f5;
   background: #1c2431;
   cursor: pointer;
+}
+
+.top-toolbar button,
+.wide-action,
+.action-grid button,
+.prep-grid button,
+.mini-grid button,
+.outliner-row button {
+  transition: border-color 0.12s ease, background 0.12s ease, opacity 0.12s ease;
 }
 
 .top-toolbar button {
@@ -200,10 +250,17 @@ button.danger:hover,
   background: #41202a;
 }
 
+button.danger {
+  border-color: #7f1d1d;
+  color: #fecaca;
+  background: #2a1116;
+}
+
 button:disabled,
 .tool-button:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.34;
+  filter: grayscale(0.35);
 }
 
 .switch-control,
@@ -241,14 +298,14 @@ select {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  background: #151b25;
-  border-color: #273243;
+  background: #101722;
+  border-color: #1f2a38;
   border-style: solid;
 }
 
 .left-panel {
-  gap: 20px;
-  padding: 16px 14px;
+  gap: 14px;
+  padding: 14px;
   border-width: 0 1px 0 0;
 }
 
@@ -296,25 +353,31 @@ select {
 }
 
 .right-panel {
-  gap: 16px;
-  padding: 18px;
+  gap: 10px;
+  padding: 12px;
   border-width: 0 0 0 1px;
+  overflow: hidden;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: 0;
+}
+
+.compact-brand {
+  padding-bottom: 4px;
+  border-bottom: 1px solid #1f2a38;
 }
 
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 34px;
+  width: 34px;
+  height: 28px;
   border-radius: 7px;
   color: #061018;
   background: #38bdf8;
@@ -335,7 +398,19 @@ select {
 .tool-button {
   justify-content: flex-start;
   width: 100%;
+  min-height: 42px;
   padding: 0 12px;
+  font-weight: 900;
+}
+
+.primary-tool {
+  border-color: #214766;
+  background: #132235;
+}
+
+.primary-tool:hover {
+  border-color: #38bdf8;
+  background: #193149;
 }
 
 .segmented {
@@ -357,35 +432,58 @@ select {
   font-weight: 800;
 }
 
+.resolution-toggle button.active {
+  border-color: #facc15;
+  color: #fef3c7;
+  background: #322713;
+}
+
+.workflow-hint {
+  padding: 12px;
+  border: 1px solid #263244;
+  border-radius: 8px;
+  background: #121a27;
+}
+
+.workflow-hint p {
+  margin: 0;
+  color: #c0ccda;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .viewport-wrap {
   position: relative;
   min-width: 0;
   min-height: 0;
-  background: #10151f;
+  background: #0b1018;
 }
 
-.viewport-topbar {
+.viewport-hud {
   position: absolute;
-  z-index: 2;
-  top: 14px;
-  left: 14px;
-  right: 14px;
-  display: flex;
-  justify-content: space-between;
+  z-index: 5;
+  top: 12px;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
   gap: 10px;
+  max-width: calc(100% - 290px);
+  overflow: hidden;
+  padding: 7px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  color: #c8d6e6;
+  background: rgba(8, 13, 21, 0.78);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   pointer-events: none;
 }
 
-.viewport-topbar span {
-  max-width: 33%;
-  overflow: hidden;
-  padding: 8px 11px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 7px;
-  color: #c8d6e6;
-  background: rgba(15, 23, 42, 0.74);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.viewport-hud span {
+  color: #61738a;
 }
 
 .three-viewport {
@@ -412,7 +510,7 @@ select {
 .view-buttons {
   position: absolute;
   right: 12px;
-  top: 48px;
+  top: 12px;
   z-index: 5;
   display: flex;
   flex-wrap: wrap;
@@ -444,6 +542,67 @@ select {
   gap: 12px;
 }
 
+.sidebar-section {
+  min-height: 0;
+  border: 1px solid #1f2a38;
+  border-radius: 8px;
+  background: #111923;
+}
+
+.sidebar-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1f2a38;
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.sidebar-title small {
+  color: #7f91a8;
+  font-size: 11px;
+}
+
+.outliner-section {
+  flex: 0 0 210px;
+  overflow: hidden;
+}
+
+.outliner-section .outliner-list {
+  max-height: 166px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.properties-section {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding-bottom: 10px;
+}
+
+.accordion-panel {
+  margin: 8px;
+  border: 1px solid #223044;
+  border-radius: 8px;
+  background: #0f1722;
+}
+
+.accordion-panel summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: #e5eef8;
+  font-size: 13px;
+  font-weight: 900;
+  list-style-position: inside;
+}
+
+.accordion-panel > :not(summary) {
+  margin: 0 10px 10px;
+}
+
 .panel-header h1 {
   margin: 0;
   font-size: 22px;
@@ -465,10 +624,10 @@ select {
 .print-check {
   display: grid;
   gap: 12px;
-  padding: 14px;
-  border: 1px solid #273243;
+  padding: 12px;
+  border: 1px solid #223044;
   border-radius: 8px;
-  background: #111923;
+  background: #101824;
 }
 
 .card-title {
@@ -934,10 +1093,11 @@ select:focus {
 
 .outliner-row {
   display: grid;
-  grid-template-columns: minmax(80px, 1fr) auto auto auto;
+  grid-template-columns: minmax(76px, 1fr) auto auto auto;
   align-items: center;
   gap: 6px;
-  padding: 6px;
+  min-height: 34px;
+  padding: 4px 5px;
   border: 1px solid #273243;
   border-radius: 7px;
   background: #0f1722;
@@ -970,14 +1130,22 @@ select:focus {
 }
 
 .outliner-row button {
-  min-height: 28px;
+  min-height: 24px;
   border: 1px solid #334155;
   border-radius: 6px;
   color: #cde7ff;
   background: #111a28;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
+}
+
+.outliner-row button:nth-of-type(1) {
+  min-width: 40px;
+}
+
+.outliner-row button:nth-of-type(2) {
+  min-width: 42px;
 }
 
 .mode-pill {
@@ -1081,9 +1249,70 @@ select:focus {
 }
 
 .density-compact .printer-card,
-.density-compact .tool-section {
+.density-compact .tool-section,
+.density-compact .accordion-panel {
   gap: 7px;
   padding: 8px;
+}
+
+.density-compact .workflow-tabs {
+  padding: 6px 10px;
+}
+
+.density-compact .workflow-tabs button {
+  min-height: 34px;
+  min-width: 92px;
+}
+
+.density-compact .top-toolbar {
+  padding: 6px 10px;
+}
+
+.density-compact .tool-button,
+.density-compact .prep-grid button,
+.density-compact .action-grid button,
+.density-compact .wide-action {
+  min-height: 30px;
+  height: 32px;
+}
+
+.density-compact input,
+.density-compact select {
+  height: 32px;
+}
+
+.density-compact .outliner-section {
+  flex-basis: 176px;
+}
+
+.density-compact .outliner-section .outliner-list {
+  max-height: 134px;
+}
+
+.density-compact .outliner-row {
+  min-height: 28px;
+  gap: 4px;
+}
+
+.density-compact .outliner-name {
+  height: 24px;
+}
+
+.density-compact .sidebar-title,
+.density-compact .accordion-panel summary {
+  padding: 8px 10px;
+}
+
+.export-card .wide-action:first-of-type,
+.export-card button:first-of-type {
+  border-color: #22c55e;
+  color: #dcfce7;
+  background: #12351f;
+}
+
+.prep-grid button:nth-last-child(1),
+.wide-action:not(:disabled) {
+  cursor: pointer;
 }
 
 @media (max-width: 1020px) {
