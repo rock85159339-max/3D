@@ -701,6 +701,12 @@ input[type="color"] {
   gap: 7px;
 }
 
+.mesh-repair-results {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
 .mesh-check-item {
   display: grid;
   grid-template-columns: 22px 46px 1fr;

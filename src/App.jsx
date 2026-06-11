@@ -36,6 +36,13 @@ import BoxSelectOverlay from './components/BoxSelectOverlay.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { applyCameraView, applyOrbitControlStyle, focusCameraOnBox as focusCameraOnBoxUtil, toggleCameraProjectionFov } from './utils/cameraUtils.js';
+import {
+  analyzeMeshRepairGeometry,
+  fillHolesGeometry,
+  mergeCloseVerticesGeometry,
+  removeDegenerateFacesGeometry,
+  removeLooseFacesGeometry,
+} from './utils/meshRepairUtils.js';
 
 const font = new FontLoader().parse(helvetikerFont);
 const evaluator = new Evaluator();
@@ -837,6 +844,7 @@ export default function App() {
   const normalArrowRef = useRef(null);
   const brushPreviewRef = useRef(null);
   const measureHelperRef = useRef(null);
+  const repairHelperRef = useRef(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
   const objectsRef = useRef([]);
@@ -877,6 +885,8 @@ export default function App() {
   const [shapeResolution, setShapeResolution] = useState('low');
   const [sculptSettings, setSculptSettings] = useState({ brushMode: 'raise', radius: 15, strength: 0.35, falloff: 'smooth', symmetryX: false, symmetryY: false, symmetryZ: false });
   const [printPrepSettings, setPrintPrepSettings] = useState({ subdivideIterations: 1, smoothStrength: 0.35, smoothIterations: 2, remeshEdgeLength: 8, remeshKeepVolume: true });
+  const [meshRepairSettings, setMeshRepairSettings] = useState({ tolerance: 0.01 });
+  const [meshRepairResult, setMeshRepairResult] = useState(null);
   const [planeCutSettings, setPlaneCutSettings] = useState({ axis: 'z', position: 0, keep: 'positive' });
   const [measureActive, setMeasureActive] = useState(false);
   const [measurePoints, setMeasurePoints] = useState([]);
@@ -1140,6 +1150,7 @@ export default function App() {
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
       renderer.domElement.removeEventListener('contextmenu', onContextMenu);
       clearBrushPreview();
+      clearRepairHelper();
       transform.dispose();
       orbit.dispose();
       disposeObject(scene);
@@ -1300,6 +1311,7 @@ export default function App() {
     detachSelectionGroup();
     clearFaceHelper();
     hideBrushPreview();
+    clearRepairHelper();
     objectsRef.current.forEach((object) => {
       sceneRef.current.remove(object);
       disposeObject(object);
@@ -1329,6 +1341,7 @@ export default function App() {
     clearSelectionHelpers();
     clearFaceHelper();
     hideBrushPreview();
+    clearRepairHelper();
     endSculptStroke();
     objectsRef.current.forEach((object) => {
       sceneRef.current.remove(object);
@@ -1453,6 +1466,47 @@ export default function App() {
     scene.remove(measureHelperRef.current);
     disposeObject(measureHelperRef.current);
     measureHelperRef.current = null;
+  }
+
+  function clearRepairHelper() {
+    const scene = sceneRef.current;
+    if (!scene || !repairHelperRef.current) return;
+    scene.remove(repairHelperRef.current);
+    disposeObject(repairHelperRef.current);
+    repairHelperRef.current = null;
+  }
+
+  function showHoleHelpers(target) {
+    const scene = sceneRef.current;
+    if (!scene || !target) return;
+    clearRepairHelper();
+    const group = new THREE.Group();
+    group.userData.helper = true;
+    target.meshes.forEach((mesh) => {
+      const analysis = analyzeMeshRepairGeometry(mesh.geometry);
+      if (!analysis.holes.length) return;
+      mesh.updateWorldMatrix(true, false);
+      const points = [];
+      analysis.holes.forEach((hole) => {
+        for (let i = 0; i < hole.points.length; i += 1) {
+          const a = hole.points[i].clone().applyMatrix4(mesh.matrixWorld);
+          const b = hole.points[(i + 1) % hole.points.length].clone().applyMatrix4(mesh.matrixWorld);
+          points.push(a, b);
+        }
+      });
+      if (!points.length) return;
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const line = new THREE.LineSegments(
+        geometry,
+        new THREE.LineBasicMaterial({ color: 0xfb923c, depthTest: false, transparent: true, opacity: 0.95 }),
+      );
+      line.renderOrder = 40;
+      line.userData.helper = true;
+      group.add(line);
+    });
+    if (!group.children.length) return;
+    scene.add(group);
+    repairHelperRef.current = group;
   }
 
   function updateMeasureHelper(points) {
@@ -2300,6 +2354,7 @@ export default function App() {
     updateSelectionHelpers([object]);
     refreshObjects();
     setMeshCheckResults(null);
+    setMeshRepairResult(null);
     showToast(message);
   }
 
@@ -2465,6 +2520,140 @@ export default function App() {
     if (!target) return;
     setMeshCheckResults(buildMeshCheckResults([target.object]));
     showToast('已檢查模型');
+  }
+
+  function summarizeRepairTarget(target, lastMessage = '') {
+    const summaries = target.meshes.map((mesh) => analyzeMeshRepairGeometry(mesh.geometry));
+    const holes = summaries.flatMap((item) => item.holes);
+    return {
+      holeCount: holes.length,
+      boundaryEdgeCount: summaries.reduce((sum, item) => sum + item.boundaryEdgeCount, 0),
+      degenerateFaceCount: summaries.reduce((sum, item) => sum + item.degenerateFaceCount, 0),
+      looseIslandCount: summaries.reduce((sum, item) => sum + Math.max(0, item.looseIslandCount - 1), 0),
+      holeDetails: holes.map((hole, index) => ({ index: index + 1, edgeCount: hole.edgeCount, simple: hole.simple })),
+      lastMessage,
+    };
+  }
+
+  function replaceMeshGeometry(mesh, nextGeometry) {
+    mesh.geometry.dispose();
+    mesh.geometry = nextGeometry;
+    mesh.geometry.computeVertexNormals();
+    mesh.geometry.computeBoundingBox();
+    mesh.geometry.computeBoundingSphere();
+    mesh.geometry.attributes.position.needsUpdate = true;
+    if (mesh.geometry.attributes.normal) mesh.geometry.attributes.normal.needsUpdate = true;
+  }
+
+  function findSelectedHoles() {
+    return runSafe('Find Holes', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      const result = summarizeRepairTarget(target, '已尋找破洞');
+      setMeshRepairResult(result);
+      showHoleHelpers(target);
+      showToast(`找到 ${result.holeCount} 個破洞`);
+    });
+  }
+
+  function fillSelectedHoles() {
+    return runSafe('Fill Holes', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('fill holes');
+      let filled = 0;
+      let skipped = 0;
+      target.meshes.forEach((mesh) => {
+        const result = fillHolesGeometry(mesh.geometry);
+        filled += result.filled;
+        skipped += result.skipped;
+        replaceMeshGeometry(mesh, result.geometry);
+      });
+      finishPrintPrepChange(target.object, '已補洞');
+      const summary = summarizeRepairTarget(target, skipped ? `已補 ${filled} 個洞，略過 ${skipped} 個複雜洞` : `已補 ${filled} 個洞`);
+      setMeshRepairResult(summary);
+      clearRepairHelper();
+      showToast(summary.lastMessage);
+    });
+  }
+
+  function mergeSelectedCloseVertices() {
+    return runSafe('Merge Close Vertices', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('merge close vertices');
+      let merged = 0;
+      target.meshes.forEach((mesh) => {
+        const result = mergeCloseVerticesGeometry(mesh.geometry, Number(meshRepairSettings.tolerance) || 0.01);
+        merged += result.mergedVertices;
+        replaceMeshGeometry(mesh, result.geometry);
+      });
+      finishPrintPrepChange(target.object, '已合併接近頂點');
+      setMeshRepairResult(summarizeRepairTarget(target, `合併了 ${merged} 個接近頂點`));
+      showToast(`合併了 ${merged} 個接近頂點`);
+    });
+  }
+
+  function removeSelectedDegenerateFaces() {
+    return runSafe('Remove Degenerate Faces', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('remove degenerate faces');
+      let removed = 0;
+      target.meshes.forEach((mesh) => {
+        const result = removeDegenerateFacesGeometry(mesh.geometry);
+        removed += result.removedFaces;
+        replaceMeshGeometry(mesh, result.geometry);
+      });
+      finishPrintPrepChange(target.object, '已移除退化面');
+      setMeshRepairResult(summarizeRepairTarget(target, `移除了 ${removed} 個退化面`));
+      showToast(`移除了 ${removed} 個退化面`);
+    });
+  }
+
+  function removeSelectedLooseFaces() {
+    return runSafe('Remove Loose Faces', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('remove loose faces');
+      let removed = 0;
+      target.meshes.forEach((mesh) => {
+        const result = removeLooseFacesGeometry(mesh.geometry);
+        removed += result.removedTriangles;
+        replaceMeshGeometry(mesh, result.geometry);
+      });
+      finishPrintPrepChange(target.object, '已移除孤立面');
+      setMeshRepairResult(summarizeRepairTarget(target, `移除了 ${removed} 個孤立 triangle`));
+      showToast(`移除了 ${removed} 個孤立 triangle`);
+    });
+  }
+
+  function autoRepairSelectedMesh() {
+    return runSafe('Auto Repair', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('auto repair');
+      let merged = 0;
+      let degenerate = 0;
+      let filled = 0;
+      target.meshes.forEach((mesh) => {
+        const mergedResult = mergeCloseVerticesGeometry(mesh.geometry, Number(meshRepairSettings.tolerance) || 0.01);
+        merged += mergedResult.mergedVertices;
+        const degenerateResult = removeDegenerateFacesGeometry(mergedResult.geometry);
+        mergedResult.geometry.dispose();
+        degenerate += degenerateResult.removedFaces;
+        const fillResult = fillHolesGeometry(degenerateResult.geometry);
+        degenerateResult.geometry.dispose();
+        filled += fillResult.filled;
+        replaceMeshGeometry(mesh, fillResult.geometry);
+      });
+      finishPrintPrepChange(target.object, 'Auto Repair 完成');
+      const summary = summarizeRepairTarget(target, `Auto Repair：合併 ${merged} 點，移除 ${degenerate} 面，補 ${filled} 洞`);
+      setMeshRepairResult(summary);
+      setMeshCheckResults(buildMeshCheckResults([target.object]));
+      clearRepairHelper();
+      showToast(summary.lastMessage);
+    });
   }
 
   function moveSelectedFace(direction = 1) {
@@ -2750,18 +2939,27 @@ export default function App() {
             onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
             onSubdivide={subdivideSelectedModel}
             onSmooth={smoothSelectedModel}
-          onRecalculate={recalculateSelectedNormals}
-          onRemesh={remeshSelectedModel}
-          onPlace={placeSelectedOnBed}
-          onCenter={centerSelectedOnBed}
-          onApplyTransform={applySelectedTransform}
-          onCheck={checkSelectedMesh}
-          planeCutSettings={planeCutSettings}
-          onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
-          onPlaneCut={applyPlaneCut}
-          results={meshCheckResults}
-          disabled={!primarySelected}
-        />
+            onRecalculate={recalculateSelectedNormals}
+            onRemesh={remeshSelectedModel}
+            onPlace={placeSelectedOnBed}
+            onCenter={centerSelectedOnBed}
+            onApplyTransform={applySelectedTransform}
+            onCheck={checkSelectedMesh}
+            planeCutSettings={planeCutSettings}
+            onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
+            onPlaneCut={applyPlaneCut}
+            repairSettings={meshRepairSettings}
+            onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
+            onFindHoles={findSelectedHoles}
+            onFillHoles={fillSelectedHoles}
+            onMergeCloseVertices={mergeSelectedCloseVertices}
+            onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
+            onRemoveLooseFaces={removeSelectedLooseFaces}
+            onAutoRepair={autoRepairSelectedMesh}
+            repairResult={meshRepairResult}
+            results={meshCheckResults}
+            disabled={!primarySelected}
+          />
         ) : activeWorkflow === 'export' ? (
           <ExportPanel
             onExportStl={() => exportModel('stl')}
@@ -2999,7 +3197,32 @@ function ExportPanel({ onExportStl, onExportObj, onSave, onLoad, hasObjects, che
   );
 }
 
-function PrintPrepPanel({ settings, onSettingChange, onSubdivide, onSmooth, onRecalculate, onRemesh, onPlace, onCenter, onApplyTransform, onCheck, planeCutSettings, onPlaneCutSettingChange, onPlaneCut, results, disabled }) {
+function PrintPrepPanel({
+  settings,
+  onSettingChange,
+  onSubdivide,
+  onSmooth,
+  onRecalculate,
+  onRemesh,
+  onPlace,
+  onCenter,
+  onApplyTransform,
+  onCheck,
+  planeCutSettings,
+  onPlaneCutSettingChange,
+  onPlaneCut,
+  repairSettings,
+  onRepairSettingChange,
+  onFindHoles,
+  onFillHoles,
+  onMergeCloseVertices,
+  onRemoveDegenerateFaces,
+  onRemoveLooseFaces,
+  onAutoRepair,
+  repairResult,
+  results,
+  disabled,
+}) {
   return (
     <section className="printer-card print-prep-card">
       <div className="card-title">列印準備 Print Prep</div>
@@ -3040,6 +3263,54 @@ function PrintPrepPanel({ settings, onSettingChange, onSubdivide, onSmooth, onRe
         </div>
         <label className="field"><span>保留方向</span><select value={planeCutSettings.keep} onChange={(event) => onPlaneCutSettingChange('keep', event.target.value)}><option value="positive">正向</option><option value="negative">負向</option></select></label>
         <button className="wide-action" onClick={onPlaneCut} disabled={disabled}>套用裁切</button>
+      </section>
+      <section className="nested-tool">
+        <div className="card-title">Mesh Repair</div>
+        <label className="field">
+          <span>Merge tolerance mm</span>
+          <input type="number" min="0.0001" step="0.001" value={repairSettings.tolerance} onChange={(event) => onRepairSettingChange('tolerance', event.target.value)} />
+        </label>
+        <div className="prep-grid">
+          <button onClick={onFindHoles} disabled={disabled}>Find Holes</button>
+          <button onClick={onFillHoles} disabled={disabled}>Fill Holes</button>
+          <button onClick={onMergeCloseVertices} disabled={disabled}>Merge Close Vertices</button>
+          <button onClick={onRemoveDegenerateFaces} disabled={disabled}>Remove Degenerate Faces</button>
+          <button onClick={onRemoveLooseFaces} disabled={disabled}>Remove Loose Faces</button>
+          <button onClick={onRecalculate} disabled={disabled}>Recalculate Normals</button>
+          <button onClick={onAutoRepair} disabled={disabled}>Auto Repair</button>
+        </div>
+        {repairResult && (
+          <div className="mesh-repair-results">
+            <div className={`mesh-check-item ${repairResult.holeCount ? 'warning' : 'ok'}`}>
+              <span>{repairResult.holeCount ? '⚠️' : '✅'}</span>
+              <strong>Hole 數量</strong>
+              <p>{repairResult.holeCount}</p>
+            </div>
+            <div className={`mesh-check-item ${repairResult.boundaryEdgeCount ? 'warning' : 'ok'}`}>
+              <span>{repairResult.boundaryEdgeCount ? '⚠️' : '✅'}</span>
+              <strong>Boundary edge</strong>
+              <p>{repairResult.boundaryEdgeCount}</p>
+            </div>
+            <div className={`mesh-check-item ${repairResult.degenerateFaceCount ? 'warning' : 'ok'}`}>
+              <span>{repairResult.degenerateFaceCount ? '⚠️' : '✅'}</span>
+              <strong>Degenerate face</strong>
+              <p>{repairResult.degenerateFaceCount}</p>
+            </div>
+            <div className={`mesh-check-item ${repairResult.looseIslandCount ? 'warning' : 'ok'}`}>
+              <span>{repairResult.looseIslandCount ? '⚠️' : '✅'}</span>
+              <strong>Loose island</strong>
+              <p>{repairResult.looseIslandCount}</p>
+            </div>
+            {repairResult.lastMessage && <div className="notice">{repairResult.lastMessage}</div>}
+            {!!repairResult.holeDetails?.length && (
+              <div className="dimension-readout">
+                {repairResult.holeDetails.map((hole) => (
+                  <span key={hole.index}>Hole #{hole.index}：{hole.edgeCount} edges {hole.simple ? '' : '（複雜）'}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
       <button className="wide-action" onClick={onCheck} disabled={disabled}>檢查模型</button>
       {results && (
