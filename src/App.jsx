@@ -180,6 +180,7 @@ function getObjectBounds(object) {
 
 function getPrintableMeshes(object) {
   const meshes = [];
+  if (!object?.visible) return meshes;
   object.traverse((child) => {
     if (child.isMesh && !child.userData.helper) meshes.push(child);
   });
@@ -766,6 +767,8 @@ function objectToProjectData(object) {
     bevelSegments: object.userData.bevelSegments || 2,
     textSettings: object.userData.textSettings || null,
     templateSettings: object.userData.templateSettings || null,
+    visible: object.visible !== false,
+    locked: !!object.userData.locked,
     children: [],
     geometry: null,
   };
@@ -794,6 +797,8 @@ function objectFromProjectData(data) {
   object.position.fromArray(data.position || [0, 0, 0]);
   object.rotation.set(...(data.rotation || [0, 0, 0]));
   object.scale.fromArray(data.scale || [1, 1, 1]);
+  object.visible = data.visible !== false;
+  object.userData.locked = !!data.locked;
   object.traverse((child) => {
     if (child.isMesh) {
       child.castShadow = true;
@@ -829,6 +834,9 @@ export default function App() {
   const sculptSnapshotRef = useRef(null);
   const sculptChangedRef = useRef(false);
   const measureActiveRef = useRef(false);
+  const boxSelectActiveRef = useRef(false);
+  const boxSelectStartRef = useRef(null);
+  const boxSelectRectRef = useRef(null);
   const modeRef = useRef('translate');
   const snapRef = useRef(true);
   const multiSelectRef = useRef(false);
@@ -838,6 +846,8 @@ export default function App() {
   const objectCountRef = useRef(0);
   const activeWorkflowRef = useRef('model');
   const autosaveReadyRef = useRef(false);
+  const prefsRef = useRef(null);
+  const cameraProjectionRef = useRef('perspective');
   const [objects, setObjects] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -854,6 +864,20 @@ export default function App() {
   const [planeCutSettings, setPlaneCutSettings] = useState({ axis: 'z', position: 0, keep: 'positive' });
   const [measureActive, setMeasureActive] = useState(false);
   const [measurePoints, setMeasurePoints] = useState([]);
+  const [boxSelectActive, setBoxSelectActive] = useState(false);
+  const [boxSelectRect, setBoxSelectRect] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [clipboardObject, setClipboardObject] = useState(null);
+  const [lockedAxis, setLockedAxis] = useState(null);
+  const [showPreferences, setShowPreferences] = useState(false);
+  const [cameraProjection, setCameraProjection] = useState(() => localStorage.getItem('printModeler.cameraProjection') || 'perspective');
+  const [preferences, setPreferences] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('printModeler.preferences')) || {};
+    } catch {
+      return {};
+    }
+  });
   const [meshCheckResults, setMeshCheckResults] = useState(null);
   const [mode, setMode] = useState('translate');
   const [snapEnabled, setSnapEnabled] = useState(true);
@@ -870,6 +894,17 @@ export default function App() {
   const primarySelected = selectedObjects[0] || null;
   const selectedCheck = primarySelected ? printCheck(primarySelected, printerSize) : null;
   const printStats = useMemo(() => getPrintStats(objectsRef.current, printerSize), [objects, printerSize.x, printerSize.y, printerSize.z]);
+  const prefs = {
+    operationStyle: 'blender',
+    defaultCamera: 'perspective',
+    mouseSensitivity: 1,
+    gridSize: 10,
+    snapDistance: 1,
+    density: 'comfortable',
+    ...preferences,
+  };
+  prefsRef.current = prefs;
+  cameraProjectionRef.current = cameraProjection;
 
   function switchWorkflow(nextWorkflow) {
     setActiveWorkflow(nextWorkflow);
@@ -946,11 +981,23 @@ export default function App() {
     }, 350);
 
     const onPointerDown = (event) => {
+      if (prefsRef.current?.operationStyle === 'blender' && event.button === 1 && orbit) {
+        orbit.mouseButtons.MIDDLE = event.shiftKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+      }
       if (transform.dragging) return;
       const rect = renderer.domElement.getBoundingClientRect();
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      setContextMenu(null);
+      if (event.button !== 0) return;
+      if (boxSelectActiveRef.current && event.button === 0) {
+        boxSelectStartRef.current = { x: event.clientX, y: event.clientY };
+        const nextRect = { x: event.clientX, y: event.clientY, width: 0, height: 0 };
+        boxSelectRectRef.current = nextRect;
+        setBoxSelectRect(nextRect);
+        return;
+      }
       if (measureActiveRef.current) {
         pickMeasurePoint();
         return;
@@ -980,11 +1027,30 @@ export default function App() {
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      if (boxSelectStartRef.current) {
+        const start = boxSelectStartRef.current;
+        const nextRect = {
+          x: Math.min(start.x, event.clientX),
+          y: Math.min(start.y, event.clientY),
+          width: Math.abs(event.clientX - start.x),
+          height: Math.abs(event.clientY - start.y),
+        };
+        boxSelectRectRef.current = nextRect;
+        setBoxSelectRect(nextRect);
+        return;
+      }
       if (editModeRef.current !== 'sculpt') return;
       continueSculptStroke();
     };
 
     const onPointerUp = () => {
+      if (boxSelectStartRef.current) {
+        selectObjectsInBox(boxSelectRectRef.current);
+        boxSelectStartRef.current = null;
+        boxSelectRectRef.current = null;
+        setBoxSelectRect(null);
+        return;
+      }
       if (editModeRef.current === 'sculpt') endSculptStroke();
     };
 
@@ -995,10 +1061,28 @@ export default function App() {
       }
     };
 
-    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointerdown', onPointerDown, true);
     renderer.domElement.addEventListener('pointermove', onPointerMove);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
     renderer.domElement.addEventListener('pointerleave', onPointerLeave);
+
+    const onContextMenu = (event) => {
+      event.preventDefault();
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      const meshes = objectsRef.current.flatMap((object) => getPrintableMeshes(object));
+      const hit = raycasterRef.current.intersectObjects(meshes, false)[0];
+      const root = hit?.object ? objectsRef.current.find((object) => {
+        let found = false;
+        object.traverse((child) => { if (child === hit.object) found = true; });
+        return found;
+      }) : null;
+      if (root && !selectedIdsRef.current.includes(root.uuid)) updateSelection(root, false);
+      setContextMenu({ x: event.clientX, y: event.clientY, type: root ? 'object' : 'empty' });
+    };
+    renderer.domElement.addEventListener('contextmenu', onContextMenu);
 
     const resize = () => {
       const width = mount.clientWidth;
@@ -1021,10 +1105,11 @@ export default function App() {
     return () => {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', resize);
-      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown, true);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      renderer.domElement.removeEventListener('contextmenu', onContextMenu);
       clearBrushPreview();
       transform.dispose();
       orbit.dispose();
@@ -1060,12 +1145,23 @@ export default function App() {
         redo();
       } else if (!typing && event.key.toLowerCase() === 'w') {
         setMode('translate');
+      } else if (!typing && event.key.toLowerCase() === 'g') {
+        setMode('translate');
       } else if (!typing && event.key.toLowerCase() === 'e') {
         setMode('rotate');
       } else if (!typing && event.key.toLowerCase() === 'r') {
+        setMode(event.shiftKey ? 'rotate' : 'rotate');
+      } else if (!typing && event.key.toLowerCase() === 's') {
         setMode('scale');
       } else if (!typing && event.key === 'Delete') {
-        deleteSelected();
+        deleteSelectedWithConfirm();
+      } else if (!typing && event.key.toLowerCase() === 'x') {
+        if (selectedIdsRef.current.length && ['translate', 'rotate', 'scale'].includes(modeRef.current)) setAxisLock('x');
+        else deleteSelectedWithConfirm();
+      } else if (!typing && event.key.toLowerCase() === 'y') {
+        if (selectedIdsRef.current.length && ['translate', 'rotate', 'scale'].includes(modeRef.current)) setAxisLock('y');
+      } else if (!typing && event.key.toLowerCase() === 'z') {
+        if (selectedIdsRef.current.length && ['translate', 'rotate', 'scale'].includes(modeRef.current)) setAxisLock('z');
       } else if (!typing && event.key === '1') {
         switchWorkflow('model');
       } else if (!typing && event.key === '2') {
@@ -1084,6 +1180,34 @@ export default function App() {
         setSculptSettings((settings) => ({ ...settings, strength: Math.max(0, roundNumber(Number(settings.strength) - 0.05, 2)) }));
       } else if (!typing && event.key === '=') {
         setSculptSettings((settings) => ({ ...settings, strength: Math.min(1, roundNumber(Number(settings.strength) + 0.05, 2)) }));
+      } else if (!typing && event.key === 'Tab') {
+        event.preventDefault();
+        if (event.ctrlKey) switchWorkflow('sculpt');
+        else switchWorkflow(activeWorkflowRef.current === 'face' ? 'model' : 'face');
+      } else if (!typing && event.key === 'Escape') {
+        setAxisLock(null);
+        setBoxSelectActive(false);
+        setContextMenu(null);
+        attachTransformForSelection([]);
+      } else if (!typing && event.key.toLowerCase() === 'f') {
+        focusSelectedObject();
+      } else if (!typing && event.key === 'Home') {
+        frameAllObjects();
+      } else if (!typing && event.key.toLowerCase() === 'a' && prefsRef.current?.operationStyle === 'maya') {
+        frameAllObjects();
+      } else if (!typing && event.key.toLowerCase() === 'b') {
+        setBoxSelectActive(true);
+        showToast('框選模式：拖曳矩形選取物件，Esc 退出');
+      } else if (!typing && event.shiftKey && event.key.toLowerCase() === 'd') {
+        duplicateSelected();
+      } else if (!typing && event.code === 'Numpad1') {
+        setCameraView('front');
+      } else if (!typing && event.code === 'Numpad3') {
+        setCameraView('right');
+      } else if (!typing && event.code === 'Numpad7') {
+        setCameraView('top');
+      } else if (!typing && event.code === 'Numpad5') {
+        toggleProjection();
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -1126,16 +1250,52 @@ export default function App() {
   useEffect(() => {
     modeRef.current = mode;
     transformRef.current?.setMode(mode);
+    setLockedAxis(null);
   }, [mode]);
 
   useEffect(() => {
     snapRef.current = snapEnabled;
     const transform = transformRef.current;
     if (!transform) return;
-    transform.setTranslationSnap(snapEnabled ? 1 : null);
+    transform.setTranslationSnap(snapEnabled ? Math.max(0.1, Number(prefs.snapDistance) || 1) : null);
     transform.setRotationSnap(snapEnabled ? THREE.MathUtils.degToRad(15) : null);
     transform.setScaleSnap(null);
-  }, [snapEnabled]);
+  }, [snapEnabled, preferences]);
+
+  useEffect(() => {
+    localStorage.setItem('printModeler.preferences', JSON.stringify(preferences));
+    const orbit = orbitRef.current;
+    if (!orbit) return;
+    const speed = Math.max(0.1, Number(prefs.mouseSensitivity) || 1);
+    orbit.rotateSpeed = speed;
+    orbit.panSpeed = speed;
+    orbit.zoomSpeed = speed;
+    if (prefs.operationStyle === 'maya') {
+      orbit.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.PAN,
+        RIGHT: THREE.MOUSE.DOLLY,
+      };
+    } else {
+      orbit.mouseButtons = {
+        LEFT: null,
+        MIDDLE: THREE.MOUSE.ROTATE,
+        RIGHT: THREE.MOUSE.PAN,
+      };
+    }
+  }, [preferences]);
+
+  useEffect(() => {
+    const transform = transformRef.current;
+    if (!transform) return;
+    transform.showX = !lockedAxis || lockedAxis === 'x';
+    transform.showY = !lockedAxis || lockedAxis === 'y';
+    transform.showZ = !lockedAxis || lockedAxis === 'z';
+  }, [lockedAxis]);
+
+  useEffect(() => {
+    boxSelectActiveRef.current = boxSelectActive;
+  }, [boxSelectActive]);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -1658,6 +1818,10 @@ export default function App() {
       attachTransformForSelection([]);
       return;
     }
+    if (object.userData.locked) {
+      showToast('Object is locked');
+      return;
+    }
     const current = selectedIdsRef.current;
     const next = additive
       ? current.includes(object.uuid)
@@ -1848,6 +2012,159 @@ export default function App() {
     if (view === 'top' || view === 'bottom') camera.up.set(0, 1, 0);
     orbit.target.set(0, 0, 25);
     orbit.update();
+  }
+
+  function focusCameraOnBox(box, fallbackDistance = 220) {
+    const camera = cameraRef.current;
+    const orbit = orbitRef.current;
+    if (!camera || !orbit || !box || box.isEmpty()) return;
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+    const radius = Math.max(size.x, size.y, size.z, 20) * 0.5;
+    const direction = camera.position.clone().sub(orbit.target);
+    if (direction.lengthSq() < 1) direction.set(1, -1, 0.7);
+    direction.normalize();
+    const fov = THREE.MathUtils.degToRad(camera.fov || 45);
+    const distance = Math.max(fallbackDistance, radius / Math.tan(fov / 2) + radius);
+    orbit.target.copy(center);
+    camera.position.copy(center).addScaledVector(direction, distance);
+    camera.near = 0.1;
+    camera.far = Math.max(3000, distance * 8);
+    camera.updateProjectionMatrix();
+    orbit.update();
+  }
+
+  function focusSelectedObject() {
+    const target = primarySelected || objectsRef.current.find((object) => selectedIdsRef.current.includes(object.uuid));
+    if (!target) {
+      showToast('Please select an object first');
+      return;
+    }
+    focusCameraOnBox(getObjectBounds(target).box, 80);
+    showToast('Focused selected object');
+  }
+
+  function frameAllObjects() {
+    const box = new THREE.Box3();
+    let hasContent = false;
+    objectsRef.current.filter((object) => object.visible !== false).forEach((object) => {
+      box.union(getObjectBounds(object).box);
+      hasContent = true;
+    });
+    box.expandByPoint(new THREE.Vector3(-printerSize.x / 2, -printerSize.y / 2, 0));
+    box.expandByPoint(new THREE.Vector3(printerSize.x / 2, printerSize.y / 2, printerSize.z * 0.4));
+    focusCameraOnBox(box, hasContent ? 160 : 260);
+    showToast('Framed scene');
+  }
+
+  function toggleProjection() {
+    const camera = cameraRef.current;
+    if (!camera) return;
+    const next = cameraProjectionRef.current === 'perspective' ? 'orthographic' : 'perspective';
+    setCameraProjection(next);
+    cameraProjectionRef.current = next;
+    localStorage.setItem('printModeler.cameraProjection', next);
+    camera.fov = next === 'orthographic' ? 8 : 45;
+    camera.updateProjectionMatrix();
+    showToast(next === 'orthographic' ? 'Ortho view enabled' : 'Perspective view enabled');
+  }
+
+  function setAxisLock(axis) {
+    setLockedAxis((current) => {
+      const next = current === axis ? null : axis;
+      showToast(next ? `Axis locked: ${next.toUpperCase()}` : 'Axis lock cleared');
+      return next;
+    });
+  }
+
+  function deleteSelectedWithConfirm() {
+    if (!selectedIdsRef.current.length) {
+      showToast('No object selected');
+      return;
+    }
+    if (window.confirm('Delete selected object(s)?')) deleteSelected();
+    else showToast('Delete cancelled');
+  }
+
+  function selectObjectsInBox(selectionRect = boxSelectRectRef.current) {
+    if (!selectionRect || selectionRect.width < 4 || selectionRect.height < 4) return;
+    const camera = cameraRef.current;
+    const mount = mountRef.current;
+    if (!camera || !mount) return;
+    const rect = mount.getBoundingClientRect();
+    const minX = selectionRect.x;
+    const maxX = selectionRect.x + selectionRect.width;
+    const minY = selectionRect.y;
+    const maxY = selectionRect.y + selectionRect.height;
+    const ids = objectsRef.current.filter((object) => object.visible !== false && !object.userData.locked).filter((object) => {
+      const { center } = getObjectBounds(object);
+      const projected = center.clone().project(camera);
+      const screenX = rect.left + ((projected.x + 1) / 2) * rect.width;
+      const screenY = rect.top + ((1 - projected.y) / 2) * rect.height;
+      return screenX >= minX && screenX <= maxX && screenY >= minY && screenY <= maxY;
+    }).map((object) => object.uuid);
+    attachTransformForSelection(ids);
+    setBoxSelectActive(false);
+    showToast(ids.length ? `Box selected ${ids.length} object(s)` : 'No objects in box');
+  }
+
+  function copySelectedToClipboard() {
+    const source = primarySelected || objectsRef.current.find((object) => selectedIdsRef.current.includes(object.uuid));
+    if (!source) {
+      showToast('No object selected');
+      return;
+    }
+    setClipboardObject(clonePrintable(source));
+    showToast('Copied object');
+  }
+
+  function pasteClipboardObject() {
+    if (!clipboardObject) {
+      showToast('Clipboard is empty');
+      return;
+    }
+    pushHistory('paste');
+    const clone = clonePrintable(clipboardObject);
+    objectsRef.current.push(clone);
+    sceneRef.current.add(clone);
+    refreshObjects();
+    attachTransformForSelection([clone.uuid]);
+    showToast('Pasted object');
+  }
+
+  function renameObject(object, name) {
+    if (!object) return;
+    object.name = name || 'Object';
+    refreshObjects();
+    if (selectedIdsRef.current.includes(object.uuid)) setSelected(readTransform(object));
+  }
+
+  function toggleObjectVisibility(object) {
+    if (!object) return;
+    object.visible = !object.visible;
+    if (!object.visible && selectedIdsRef.current.includes(object.uuid)) {
+      attachTransformForSelection(selectedIdsRef.current.filter((id) => id !== object.uuid));
+    }
+    refreshObjects();
+  }
+
+  function toggleObjectLock(object) {
+    if (!object) return;
+    object.userData.locked = !object.userData.locked;
+    if (object.userData.locked && selectedIdsRef.current.includes(object.uuid)) {
+      attachTransformForSelection(selectedIdsRef.current.filter((id) => id !== object.uuid));
+    }
+    refreshObjects();
+  }
+
+  function updatePreference(key, value) {
+    setPreferences((current) => ({ ...current, [key]: value }));
+  }
+
+  function closeContextMenu() {
+    setContextMenu(null);
   }
 
   function groupSelected() {
@@ -2370,7 +2687,7 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell density-${prefs.density}`} onClick={closeContextMenu}>
       <TopToolbar>
         <div className="project-strip">
           <input className="project-name-input" value={projectName} onChange={(event) => setProjectName(event.target.value || 'Untitled Model')} />
@@ -2390,9 +2707,10 @@ export default function App() {
         <div className="toolbar-group">
           <button onClick={undo} disabled={!historyRef.current.length}>復原 Undo</button>
           <button onClick={redo} disabled={!redoRef.current.length}>重做 Redo</button>
-          <button className="danger" onClick={deleteSelected} disabled={!selectedIds.length}><Trash2 size={18} />刪除</button>
+          <button className="danger" onClick={deleteSelectedWithConfirm} disabled={!selectedIds.length}><Trash2 size={18} />Delete</button>
           <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={loadProjectFile} />
           <button onClick={resetCameraView}>重設視角</button>
+          <button onClick={() => setShowPreferences((value) => !value)}>Preferences</button>
         </div>
         <label className="switch-control">
           <input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />
@@ -2413,6 +2731,16 @@ export default function App() {
             localStorage.setItem('printModeler.hideGuide', 'true');
             setShowGuide(false);
           }}
+        />
+      )}
+
+      {showPreferences && (
+        <PreferencesPanel
+          preferences={prefs}
+          cameraProjection={cameraProjection}
+          onChange={updatePreference}
+          onClose={() => setShowPreferences(false)}
+          onProjectionChange={toggleProjection}
         />
       )}
 
@@ -2449,7 +2777,19 @@ export default function App() {
           {['front', 'back', 'left', 'right', 'top', 'bottom', 'iso'].map((view) => (
             <button key={view} onClick={() => setCameraView(view)}>{view === 'iso' ? 'ISO' : view[0].toUpperCase() + view.slice(1)}</button>
           ))}
+          <button className="projection-toggle" onClick={toggleProjection}>{cameraProjection === 'orthographic' ? 'Ortho' : 'Perspective'}</button>
         </div>
+        {boxSelectRect && (
+          <div
+            className="box-select-rect"
+            style={{
+              left: boxSelectRect.x - (mountRef.current?.getBoundingClientRect().left || 0),
+              top: boxSelectRect.y - (mountRef.current?.getBoundingClientRect().top || 0),
+              width: boxSelectRect.width,
+              height: boxSelectRect.height,
+            }}
+          />
+        )}
         {!objects.length && <div className="empty-scene-hint">從左側新增一個基本物件開始建模</div>}
       </section>
 
@@ -2467,19 +2807,15 @@ export default function App() {
         </div>
 
         <section className="printer-card">
-          <div className="card-title">物件清單</div>
-          <div className="object-list">
-            {objects.length ? objects.map((object) => (
-              <button
-                key={object.uuid}
-                className={selectedIds.includes(object.uuid) ? 'selected' : ''}
-                onClick={() => updateSelection(object, multiSelect)}
-              >
-                <span>{object.name}</span>
-                <small>{object.userData.mode === 'hole' ? 'Hole' : 'Solid'}</small>
-              </button>
-            )) : <span className="muted">尚無物件</span>}
-          </div>
+          <div className="card-title">Outliner</div>
+          <OutlinerPanel
+            objects={objects}
+            selectedIds={selectedIds}
+            onSelect={updateSelection}
+            onRename={renameObject}
+            onToggleVisibility={toggleObjectVisibility}
+            onToggleLock={toggleObjectLock}
+          />
         </section>
 
         {activeWorkflow === 'prep' ? (
@@ -2539,7 +2875,7 @@ export default function App() {
               selectedCount={selectedIds.length}
               primarySelected={primarySelected}
               duplicateSelected={duplicateSelected}
-              deleteSelected={deleteSelected}
+              deleteSelected={deleteSelectedWithConfirm}
               centerSelectedOnPlate={centerSelectedOnPlate}
               dropSelectedToPlate={dropSelectedToPlate}
               setSelectedMode={setSelectedMode}
@@ -2573,6 +2909,35 @@ export default function App() {
           <div className="empty-state"><Move3D size={32} /><p>請選取物件</p></div>
         )}
       </RightPanel>
+      <StatusBar
+        workflow={activeWorkflow}
+        editMode={editMode}
+        mode={mode}
+        selectedCount={selectedIds.length}
+        lockedAxis={lockedAxis}
+        operationStyle={prefs.operationStyle}
+        brushMode={sculptSettings.brushMode}
+        boxSelectActive={boxSelectActive}
+      />
+      {contextMenu && (
+        <ContextMenu
+          menu={contextMenu}
+          hasSelection={selectedIds.length > 0}
+          hasClipboard={!!clipboardObject}
+          onClose={closeContextMenu}
+          onDuplicate={() => { duplicateSelected(); closeContextMenu(); }}
+          onCopy={() => { copySelectedToClipboard(); closeContextMenu(); }}
+          onPaste={() => { pasteClipboardObject(); closeContextMenu(); }}
+          onDelete={() => { deleteSelectedWithConfirm(); closeContextMenu(); }}
+          onSolid={() => { setSelectedMode('solid'); closeContextMenu(); }}
+          onHole={() => { setSelectedMode('hole'); closeContextMenu(); }}
+          onPlace={() => { placeSelectedOnBed(); closeContextMenu(); }}
+          onCenter={() => { centerSelectedOnBed(); closeContextMenu(); }}
+          onApply={() => { applySelectedTransform(); closeContextMenu(); }}
+          onFocus={() => { focusSelectedObject(); closeContextMenu(); }}
+          onAddShape={(type) => { addShape(type); closeContextMenu(); }}
+        />
+      )}
       {toast && <div className="toast">{toast}</div>}
     </main>
   );
@@ -2592,20 +2957,157 @@ function TransformFields({ title, data, onChange, step = '0.1', unit, labels = {
   );
 }
 
+function PreferencesPanel({ preferences, cameraProjection, onChange, onClose, onProjectionChange }) {
+  return (
+    <section className="preferences-panel" onClick={(event) => event.stopPropagation()}>
+      <div className="panel-title-row">
+        <strong>Preferences</strong>
+        <button onClick={onClose}>Close</button>
+      </div>
+      <div className="settings-grid">
+        <label className="field">
+          <span>Operation mode</span>
+          <select value={preferences.operationStyle} onChange={(event) => onChange('operationStyle', event.target.value)}>
+            <option value="blender">Blender Style</option>
+            <option value="maya">Maya Style</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Default camera</span>
+          <select
+            value={preferences.defaultCamera}
+            onChange={(event) => {
+              onChange('defaultCamera', event.target.value);
+              if (event.target.value !== cameraProjection) onProjectionChange();
+            }}
+          >
+            <option value="perspective">Perspective</option>
+            <option value="orthographic">Orthographic</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Mouse sensitivity</span>
+          <input type="number" min="0.1" max="5" step="0.1" value={preferences.mouseSensitivity} onChange={(event) => onChange('mouseSensitivity', Number(event.target.value) || 1)} />
+        </label>
+        <label className="field">
+          <span>Grid size mm</span>
+          <input type="number" min="1" step="1" value={preferences.gridSize} onChange={(event) => onChange('gridSize', Math.max(1, Number(event.target.value) || 10))} />
+        </label>
+        <label className="field">
+          <span>Snap distance mm</span>
+          <input type="number" min="0.1" step="0.1" value={preferences.snapDistance} onChange={(event) => onChange('snapDistance', Math.max(0.1, Number(event.target.value) || 1))} />
+        </label>
+        <label className="field">
+          <span>Theme density</span>
+          <select value={preferences.density} onChange={(event) => onChange('density', event.target.value)}>
+            <option value="comfortable">Comfortable</option>
+            <option value="compact">Compact</option>
+          </select>
+        </label>
+      </div>
+      <div className="preference-footer">
+        <span>Camera: {cameraProjection === 'orthographic' ? 'Ortho' : 'Perspective'}</span>
+        <button onClick={onProjectionChange}>Toggle Ortho / Perspective</button>
+      </div>
+    </section>
+  );
+}
+
+function OutlinerPanel({ objects, selectedIds, onSelect, onRename, onToggleVisibility, onToggleLock }) {
+  if (!objects.length) return <div className="empty-state compact">No objects yet</div>;
+  return (
+    <div className="outliner-list">
+      {objects.map((object) => (
+        <div key={object.uuid} className={`outliner-row ${selectedIds.includes(object.uuid) ? 'selected' : ''} ${object.userData.locked ? 'locked' : ''}`} onClick={(event) => onSelect(object, event.shiftKey)}>
+          <input
+            className="outliner-name"
+            value={object.name}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => onRename(object, event.target.value)}
+          />
+          <span className={`mode-pill ${object.userData.mode === 'hole' ? 'hole' : 'solid'}`}>{object.userData.mode === 'hole' ? 'Hole' : 'Solid'}</span>
+          <button title="Show / hide" onClick={(event) => { event.stopPropagation(); onToggleVisibility(object); }}>{object.visible === false ? 'Show' : 'Hide'}</button>
+          <button title="Lock / unlock" onClick={(event) => { event.stopPropagation(); onToggleLock(object); }}>{object.userData.locked ? 'Unlock' : 'Lock'}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ContextMenu({
+  menu,
+  hasSelection,
+  hasClipboard,
+  onDuplicate,
+  onCopy,
+  onPaste,
+  onDelete,
+  onSolid,
+  onHole,
+  onPlace,
+  onCenter,
+  onApply,
+  onFocus,
+  onAddShape,
+}) {
+  return (
+    <div className="context-menu" style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()}>
+      {menu.type === 'object' ? (
+        <>
+          <button disabled={!hasSelection} onClick={onCopy}>Copy</button>
+          <button disabled={!hasSelection} onClick={onDuplicate}>Duplicate</button>
+          <button disabled={!hasSelection} onClick={onDelete}>Delete</button>
+          <button disabled={!hasSelection} onClick={onSolid}>Set Solid</button>
+          <button disabled={!hasSelection} onClick={onHole}>Set Hole</button>
+          <button disabled={!hasSelection} onClick={onPlace}>Place on Bed</button>
+          <button disabled={!hasSelection} onClick={onCenter}>Center</button>
+          <button disabled={!hasSelection} onClick={onApply}>Apply Transform</button>
+          <button disabled={!hasSelection} onClick={onFocus}>Focus Object</button>
+        </>
+      ) : (
+        <>
+          <button onClick={() => onAddShape('cube')}>Add Cube</button>
+          <button onClick={() => onAddShape('sphere')}>Add Sphere</button>
+          <button onClick={() => onAddShape('cylinder')}>Add Cylinder</button>
+          <button disabled={!hasSelection} onClick={onCopy}>Copy Selection</button>
+          <button disabled={!hasClipboard} onClick={onPaste}>Paste</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatusBar({ workflow, editMode, mode, selectedCount, lockedAxis, operationStyle, brushMode, boxSelectActive }) {
+  const tool = editMode === 'sculpt' ? `Sculpt ${brushMode}` : boxSelectActive ? 'Box Select' : mode;
+  const hint = operationStyle === 'maya'
+    ? 'Maya: Alt+Left rotate, Alt+Middle pan, Alt+Right zoom, F focus, A frame all'
+    : 'Blender: Middle rotate, Shift+Middle pan, G move, R rotate, S scale, F focus';
+  return (
+    <footer className="status-bar">
+      <span>Mode: {workflow} / {editMode}</span>
+      <span>Tool: {tool}</span>
+      <span>Selected: {selectedCount}</span>
+      <span>Axis: {lockedAxis ? lockedAxis.toUpperCase() : 'None'}</span>
+      <span>{hint}</span>
+    </footer>
+  );
+}
+
 function GuidePanel({ onClose, onNeverShow }) {
   return (
     <section className="guide-panel">
       <div>
         <strong>操作指南</strong>
+        <p>基本操作：中鍵旋轉視角，Shift + 中鍵平移，滾輪縮放，G 移動，R 旋轉，S 縮放，F 聚焦，Tab 切換 Object / Face Mode。</p>
         <ol>
-          <li>從左側新增 Cube / Sphere / Cylinder。</li>
-          <li>使用移動、旋轉、縮放調整位置。</li>
-          <li>切到 Face Mode 可推拉表面。</li>
-          <li>切到 Sculpt Mode 可用筆刷雕刻。</li>
-          <li>用 Print Prep 檢查模型。</li>
+          <li>新增基本物件。</li>
+          <li>用 G / R / S 調整位置、旋轉與尺寸。</li>
+          <li>用 Face Mode 推拉表面。</li>
+          <li>用 Sculpt Mode 雕刻。</li>
+          <li>用 Print Prep 檢查與修復。</li>
           <li>匯出 STL 進行 3D 列印。</li>
         </ol>
-        <p>快捷鍵：W 移動、E 旋轉、R 縮放、Delete 刪除、Ctrl+Z 復原、Ctrl+Y 重做、1-5 切換流程。</p>
+        <p>更多快捷鍵：Shift+D 複製，X/Y/Z 鎖定軸，B 框選，Home 縮放到全部物件，Numpad 1/3/7 切視角，Numpad 5 切換 Ortho / Perspective。</p>
       </div>
       <div className="guide-actions">
         <button onClick={onClose}>關閉</button>
