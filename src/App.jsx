@@ -162,6 +162,33 @@ function getPrintableMeshes(object) {
   return meshes;
 }
 
+function makeEditableGeometry(mesh) {
+  if (!mesh?.geometry) return null;
+  if (mesh.geometry.index) {
+    const nextGeometry = mesh.geometry.toNonIndexed();
+    nextGeometry.computeVertexNormals();
+    mesh.geometry.dispose();
+    mesh.geometry = nextGeometry;
+  }
+  return mesh.geometry;
+}
+
+function readTriangle(geometry, faceIndex) {
+  const position = geometry.attributes.position;
+  const offset = faceIndex * 9;
+  if (!position || offset + 8 >= position.array.length) return null;
+  const a = new THREE.Vector3(position.array[offset], position.array[offset + 1], position.array[offset + 2]);
+  const b = new THREE.Vector3(position.array[offset + 3], position.array[offset + 4], position.array[offset + 5]);
+  const c = new THREE.Vector3(position.array[offset + 6], position.array[offset + 7], position.array[offset + 8]);
+  const center = new THREE.Vector3().addVectors(a, b).add(c).multiplyScalar(1 / 3);
+  const normal = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a)).normalize();
+  return { a, b, c, center, normal, indices: [faceIndex * 3, faceIndex * 3 + 1, faceIndex * 3 + 2] };
+}
+
+function setPositionAt(attribute, index, point) {
+  attribute.setXYZ(index, point.x, point.y, point.z);
+}
+
 function createShape(type, index = 0) {
   const def = SHAPES[type];
   const color = `#${palette[index % palette.length].toString(16).padStart(6, '0')}`;
@@ -571,12 +598,16 @@ export default function App() {
   const transformRef = useRef(null);
   const plateRef = useRef(null);
   const selectionHelpersRef = useRef([]);
+  const faceHelperRef = useRef(null);
+  const normalArrowRef = useRef(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
   const objectsRef = useRef([]);
   const selectedIdsRef = useRef([]);
   const selectedRef = useRef(null);
   const selectionGroupRef = useRef(null);
+  const currentFaceRef = useRef(null);
+  const editModeRef = useRef('object');
   const modeRef = useRef('translate');
   const snapRef = useRef(true);
   const multiSelectRef = useRef(false);
@@ -587,6 +618,9 @@ export default function App() {
   const [objects, setObjects] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [editMode, setEditMode] = useState('object');
+  const [faceSelection, setFaceSelection] = useState(null);
+  const [faceSettings, setFaceSettings] = useState({ distance: 5, radius: 20, softEdit: false, smoothStrength: 0.5 });
   const [mode, setMode] = useState('translate');
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [multiSelect, setMultiSelect] = useState(false);
@@ -660,6 +694,10 @@ export default function App() {
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      if (editModeRef.current === 'face') {
+        pickFaceFromPointer();
+        return;
+      }
       const meshes = objectsRef.current.flatMap((object) => getPrintableMeshes(object));
       const hits = raycasterRef.current.intersectObjects(meshes, false);
       const hitObject = hits[0]?.object;
@@ -722,6 +760,21 @@ export default function App() {
   useEffect(() => {
     multiSelectRef.current = multiSelect;
   }, [multiSelect]);
+
+  useEffect(() => {
+    editModeRef.current = editMode;
+    const transform = transformRef.current;
+    if (!transform) return;
+    if (editMode === 'face') {
+      if (!selectedIdsRef.current.length) showToast('請先選取一個 mesh 物件');
+      transform.detach();
+      detachSelectionGroup();
+      setSelected(primarySelected ? readTransform(primarySelected) : null);
+    } else {
+      clearFaceHelper();
+      attachTransformForSelection(selectedIdsRef.current);
+    }
+  }, [editMode]);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -836,6 +889,96 @@ export default function App() {
     selectionHelpersRef.current = [];
   }
 
+  function clearFaceHelper() {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    if (faceHelperRef.current) {
+      scene.remove(faceHelperRef.current);
+      faceHelperRef.current.geometry?.dispose?.();
+      faceHelperRef.current.material?.dispose?.();
+      faceHelperRef.current = null;
+    }
+    if (normalArrowRef.current) {
+      scene.remove(normalArrowRef.current);
+      normalArrowRef.current.cone?.geometry?.dispose?.();
+      normalArrowRef.current.cone?.material?.dispose?.();
+      normalArrowRef.current.line?.geometry?.dispose?.();
+      normalArrowRef.current.line?.material?.dispose?.();
+      normalArrowRef.current = null;
+    }
+    currentFaceRef.current = null;
+    setFaceSelection(null);
+  }
+
+  function showFaceHelper(mesh, faceIndex) {
+    const scene = sceneRef.current;
+    if (!scene || !mesh) return;
+    clearFaceHelper();
+    const geometry = makeEditableGeometry(mesh);
+    const triangle = readTriangle(geometry, faceIndex);
+    if (!triangle) return;
+
+    mesh.updateWorldMatrix(true, false);
+    const a = triangle.a.clone().applyMatrix4(mesh.matrixWorld);
+    const b = triangle.b.clone().applyMatrix4(mesh.matrixWorld);
+    const c = triangle.c.clone().applyMatrix4(mesh.matrixWorld);
+    const center = triangle.center.clone().applyMatrix4(mesh.matrixWorld);
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
+    const worldNormal = triangle.normal.clone().applyMatrix3(normalMatrix).normalize();
+
+    const helperGeometry = new THREE.BufferGeometry().setFromPoints([a, b, c]);
+    helperGeometry.setIndex([0, 1, 2]);
+    helperGeometry.computeVertexNormals();
+    const helper = new THREE.Mesh(
+      helperGeometry,
+      new THREE.MeshBasicMaterial({
+        color: 0xfacc15,
+        transparent: true,
+        opacity: 0.42,
+        side: THREE.DoubleSide,
+        depthTest: false,
+      }),
+    );
+    helper.renderOrder = 20;
+    helper.userData.helper = true;
+    scene.add(helper);
+    faceHelperRef.current = helper;
+
+    const arrow = new THREE.ArrowHelper(worldNormal, center, 16, 0xfacc15, 5, 2.5);
+    arrow.userData.helper = true;
+    scene.add(arrow);
+    normalArrowRef.current = arrow;
+
+    currentFaceRef.current = { mesh, faceIndex, normal: triangle.normal.clone(), center: triangle.center.clone() };
+    setFaceSelection({
+      faceIndex,
+      meshName: mesh.name || mesh.parent?.name || 'Mesh',
+      normal: {
+        x: roundNumber(worldNormal.x, 3),
+        y: roundNumber(worldNormal.y, 3),
+        z: roundNumber(worldNormal.z, 3),
+      },
+    });
+  }
+
+  function pickFaceFromPointer() {
+    const root = objectsRef.current.find((object) => object.uuid === selectedIdsRef.current[0]);
+    if (!root) {
+      showToast('請先選取一個物件');
+      return;
+    }
+    const meshes = getPrintableMeshes(root);
+    const hits = raycasterRef.current.intersectObjects(meshes, false);
+    const hit = hits[0];
+    if (!hit?.object || hit.faceIndex == null) {
+      clearFaceHelper();
+      showToast('請點選模型表面');
+      return;
+    }
+    makeEditableGeometry(hit.object);
+    showFaceHelper(hit.object, hit.faceIndex);
+  }
+
   function updateSelectionHelpers(selectedItems) {
     const scene = sceneRef.current;
     if (!scene) return;
@@ -853,6 +996,7 @@ export default function App() {
     const transform = transformRef.current;
     const scene = sceneRef.current;
     if (!transform || !scene) return;
+    clearFaceHelper();
     detachSelectionGroup();
     const selectedItems = objectsRef.current.filter((object) => ids.includes(object.uuid));
     selectedIdsRef.current = ids;
@@ -868,7 +1012,8 @@ export default function App() {
 
     if (selectedItems.length === 1) {
       selectedRef.current = selectedItems[0];
-      transform.attach(selectedItems[0]);
+      if (editModeRef.current === 'object') transform.attach(selectedItems[0]);
+      else transform.detach();
       setSelected(readTransform(selectedItems[0]));
       return;
     }
@@ -885,7 +1030,8 @@ export default function App() {
     selectedItems.forEach((object) => selectionGroup.attach(object));
     selectionGroupRef.current = selectionGroup;
     selectedRef.current = selectionGroup;
-    transform.attach(selectionGroup);
+    if (editModeRef.current === 'object') transform.attach(selectionGroup);
+    else transform.detach();
     setSelected(readTransform(selectionGroup));
   }
 
@@ -1232,6 +1378,98 @@ export default function App() {
     refreshObjects();
   }
 
+  function updateEditedMesh(mesh) {
+    mesh.geometry.computeVertexNormals();
+    mesh.geometry.computeBoundingBox();
+    mesh.geometry.computeBoundingSphere();
+    mesh.geometry.attributes.position.needsUpdate = true;
+    if (mesh.geometry.attributes.normal) mesh.geometry.attributes.normal.needsUpdate = true;
+    if (primarySelected) setSelected(readTransform(primarySelected));
+    refreshObjects();
+  }
+
+  function moveSelectedFace(direction = 1) {
+    const face = currentFaceRef.current;
+    if (!face?.mesh) {
+      showToast('請點選模型表面');
+      return;
+    }
+    const mesh = face.mesh;
+    const geometry = makeEditableGeometry(mesh);
+    const triangle = readTriangle(geometry, face.faceIndex);
+    if (!triangle) {
+      showToast('請重新選取模型表面');
+      clearFaceHelper();
+      return;
+    }
+    const distance = Math.abs(Number(faceSettings.distance) || 0) * direction;
+    if (Math.abs(distance) < 0.001) return;
+    pushHistory('face move');
+
+    const position = geometry.attributes.position;
+    const normal = triangle.normal.clone().normalize();
+    const center = triangle.center.clone();
+    const radius = Math.max(0.5, Number(faceSettings.radius) || 0.5);
+    const selectedIndices = new Set(triangle.indices);
+    const delta = normal.clone().multiplyScalar(distance);
+
+    for (let i = 0; i < position.count; i += 1) {
+      const vertex = new THREE.Vector3().fromBufferAttribute(position, i);
+      let weight = selectedIndices.has(i) ? 1 : 0;
+      if (faceSettings.softEdit) {
+        const distanceToCenter = vertex.distanceTo(center);
+        if (distanceToCenter <= radius) {
+          weight = Math.max(weight, 1 - distanceToCenter / radius);
+        }
+      }
+      if (weight <= 0) continue;
+      vertex.addScaledVector(delta, weight);
+      setPositionAt(position, i, vertex);
+    }
+
+    updateEditedMesh(mesh);
+    showFaceHelper(mesh, face.faceIndex);
+    showToast(direction > 0 ? '已向外拉伸面' : '已向內推入面');
+  }
+
+  function smoothSelectedFace() {
+    const face = currentFaceRef.current;
+    if (!face?.mesh) {
+      showToast('請點選模型表面');
+      return;
+    }
+    const mesh = face.mesh;
+    const geometry = makeEditableGeometry(mesh);
+    const triangle = readTriangle(geometry, face.faceIndex);
+    if (!triangle) {
+      showToast('請重新選取模型表面');
+      clearFaceHelper();
+      return;
+    }
+    pushHistory('face smooth');
+    const position = geometry.attributes.position;
+    const radius = Math.max(0.5, Number(faceSettings.radius) || 0.5);
+    const strength = THREE.MathUtils.clamp(Number(faceSettings.smoothStrength) || 0, 0, 1);
+    const center = triangle.center.clone();
+    const vertices = [];
+    for (let i = 0; i < position.count; i += 1) vertices.push(new THREE.Vector3().fromBufferAttribute(position, i));
+
+    vertices.forEach((vertex, index) => {
+      const distanceToCenter = vertex.distanceTo(center);
+      if (distanceToCenter > radius && !triangle.indices.includes(index)) return;
+      const nearby = vertices.filter((candidate) => candidate.distanceTo(vertex) <= radius * 0.45);
+      if (nearby.length < 2) return;
+      const average = nearby.reduce((sum, candidate) => sum.add(candidate), new THREE.Vector3()).multiplyScalar(1 / nearby.length);
+      const weight = triangle.indices.includes(index) ? 1 : Math.max(0, 1 - distanceToCenter / radius);
+      const next = vertex.clone().lerp(average, strength * weight);
+      setPositionAt(position, index, next);
+    });
+
+    updateEditedMesh(mesh);
+    showFaceHelper(mesh, face.faceIndex);
+    showToast('已平滑選取區域');
+  }
+
   function rebuildCubeGeometry(object) {
     if (object.userData.shapeType !== 'cube' || !object.isMesh) return;
     const size = getObjectBounds(object).size;
@@ -1315,6 +1553,8 @@ export default function App() {
         <div className="toolbar-group">
           <button onClick={undo} disabled={!historyRef.current.length}>復原 Undo</button>
           <button onClick={redo} disabled={!redoRef.current.length}>重做 Redo</button>
+          <button onClick={() => setEditMode('object')} className={editMode === 'object' ? 'active' : ''}>Object Mode</button>
+          <button onClick={() => setEditMode('face')} className={editMode === 'face' ? 'active' : ''}>Face Mode</button>
           <button onClick={() => setMultiSelect((value) => !value)} className={multiSelect ? 'active' : ''}>多選</button>
           <button onClick={() => addShape('cube')}><Box size={18} />新增</button>
           <button onClick={duplicateSelected} disabled={!selectedIds.length}><Copy size={18} />複製</button>
@@ -1408,6 +1648,7 @@ export default function App() {
         <div className="viewport-topbar">
           <span>{objects.length} objects</span>
           <span>{selectedIds.length} selected</span>
+          <span>{editMode === 'face' ? 'Face Mode' : 'Object Mode'}</span>
           <span>{printerSize.x} x {printerSize.y} x {printerSize.z} mm</span>
           <span>{selected ? selected.name : '未選取物件'}</span>
         </div>
@@ -1443,7 +1684,16 @@ export default function App() {
           </div>
         </section>
 
-        {selected ? (
+        {editMode === 'face' ? (
+          <FaceEditPanel
+            faceSelection={faceSelection}
+            settings={faceSettings}
+            onSettingChange={(key, value) => setFaceSettings((settings) => ({ ...settings, [key]: value }))}
+            onPull={() => moveSelectedFace(1)}
+            onPush={() => moveSelectedFace(-1)}
+            onSmooth={smoothSelectedFace}
+          />
+        ) : selected ? (
           <div className="property-stack">
             <label className="field"><span>名稱</span><input value={primarySelected?.name || selected.name} onChange={(event) => updateSelected('name', null, event.target.value)} /></label>
             <div className="row-fields">
@@ -1479,6 +1729,40 @@ function TransformFields({ title, data, onChange, step = '0.1', unit, labels = {
         </label>
       ))}
     </fieldset>
+  );
+}
+
+function FaceEditPanel({ faceSelection, settings, onSettingChange, onPull, onPush, onSmooth }) {
+  return (
+    <div className="property-stack">
+      <section className="printer-card face-edit-card">
+        <div className="card-title">面編輯</div>
+        {faceSelection ? (
+          <>
+            <div className="status-row ok"><span>目前選取</span><strong>Face #{faceSelection.faceIndex}</strong></div>
+            <div className="dimension-readout">
+              <span>法線 X：{faceSelection.normal.x}</span>
+              <span>法線 Y：{faceSelection.normal.y}</span>
+              <span>法線 Z：{faceSelection.normal.z}</span>
+            </div>
+          </>
+        ) : (
+          <div className="empty-state compact"><Move3D size={28} /><p>請點選模型表面</p></div>
+        )}
+        <label className="field"><span>拉伸距離 mm</span><input type="number" step="1" min="0.1" value={settings.distance} onChange={(event) => onSettingChange('distance', event.target.value)} /></label>
+        <label className="field"><span>影響範圍 mm</span><input type="number" step="1" min="0.5" value={settings.radius} onChange={(event) => onSettingChange('radius', event.target.value)} /></label>
+        <label className="mini-check toggle-line">
+          <input type="checkbox" checked={settings.softEdit} onChange={(event) => onSettingChange('softEdit', event.target.checked)} />
+          <span>軟編輯：{settings.softEdit ? '開' : '關'}</span>
+        </label>
+        <label className="field"><span>平滑強度</span><input type="number" step="0.1" min="0" max="1" value={settings.smoothStrength} onChange={(event) => onSettingChange('smoothStrength', event.target.value)} /></label>
+        <div className="action-grid">
+          <button onClick={onPull} disabled={!faceSelection}>向外拉伸</button>
+          <button onClick={onPush} disabled={!faceSelection}>向內推入</button>
+        </div>
+        <button className="wide-action" onClick={onSmooth} disabled={!faceSelection}>平滑選取區域</button>
+      </section>
+    </div>
   );
 }
 

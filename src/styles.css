@@ -417,6 +417,45 @@ input[type="color"] {
   font-weight: 900;
 }
 
+.wide-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.face-edit-card {
+  gap: 12px;
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.action-grid button {
+  height: 38px;
+  border: 1px solid #273243;
+  border-radius: 7px;
+  color: #e0f2fe;
+  background: #111a28;
+  font-weight: 900;
+}
+
+.action-grid button:hover:not(:disabled),
+.wide-action:hover:not(:disabled) {
+  border-color: #38bdf8;
+  background: #163049;
+}
+
+.action-grid button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.toggle-line {
+  margin-top: 0;
+}
+
 .mini-check {
   grid-template-columns: 18px 1fr;
   align-items: center;
@@ -509,6 +548,11 @@ select:focus {
   color: #93a4b8;
   text-align: center;
   padding: 22px;
+}
+
+.empty-state.compact {
+  min-height: 110px;
+  padding: 14px;
 }
 
 .empty-state p {
