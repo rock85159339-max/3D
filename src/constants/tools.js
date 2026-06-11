@@ -2,12 +2,9 @@ import {
   Box,
   Circle,
   Cylinder,
-  Layers3,
   Move3D,
   RotateCw,
   Scale,
-  Smartphone,
-  Square,
   Type,
 } from 'lucide-react';
 
@@ -15,15 +12,10 @@ export const SHAPES = {
   cube: { label: 'Cube', icon: Box, size: { x: 20, y: 20, z: 20 } },
   sphere: { label: 'Sphere', icon: Circle, size: { x: 20, y: 20, z: 20 } },
   cylinder: { label: 'Cylinder', icon: Cylinder, size: { x: 20, y: 20, z: 30 } },
+  torus: { label: 'Torus', icon: Circle, size: { x: 30, y: 30, z: 5 } },
+  cone: { label: 'Cone', icon: Cylinder, size: { x: 25, y: 25, z: 35 } },
+  text: { label: 'Text', icon: Type, size: { x: 40, y: 12, z: 4 } },
 };
-
-export const TEMPLATES = [
-  { type: 'phoneStand', label: '手機支架', icon: Smartphone },
-  { type: 'roundBase', label: '圓形底座', icon: Circle },
-  { type: 'storageBox', label: '方形收納盒', icon: Square },
-  { type: 'figureBase', label: '公仔底座', icon: Layers3 },
-  { type: 'textPlate', label: '文字牌', icon: Type },
-];
 
 export const MODE_BUTTONS = [
   { mode: 'translate', label: '移動', icon: Move3D },

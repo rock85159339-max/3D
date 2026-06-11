@@ -16,12 +16,9 @@ import {
   Copy,
   Cylinder,
   Download,
-  Layers3,
   Move3D,
   RotateCw,
   Scale,
-  Smartphone,
-  Square,
   Trash2,
   Type,
 } from 'lucide-react';
@@ -43,15 +40,9 @@ const SHAPES = {
   cube: { label: 'Cube', icon: Box, size: { x: 20, y: 20, z: 20 } },
   sphere: { label: 'Sphere', icon: Circle, size: { x: 20, y: 20, z: 20 } },
   cylinder: { label: 'Cylinder', icon: Cylinder, size: { x: 20, y: 20, z: 30 } },
+  torus: { label: 'Torus', icon: Circle, size: { x: 30, y: 30, z: 5 } },
+  cone: { label: 'Cone', icon: Cylinder, size: { x: 25, y: 25, z: 35 } },
 };
-
-const TEMPLATES = [
-  { type: 'phoneStand', label: '手機支架', icon: Smartphone },
-  { type: 'roundBase', label: '圓形底座', icon: Circle },
-  { type: 'storageBox', label: '方形收納盒', icon: Square },
-  { type: 'figureBase', label: '公仔底座', icon: Layers3 },
-  { type: 'textPlate', label: '文字牌', icon: Type },
-];
 
 const MODE_BUTTONS = [
   { mode: 'translate', label: '移動', icon: Move3D },
@@ -180,6 +171,13 @@ function createShape(type, index = 0) {
     object = new THREE.Mesh(new THREE.SphereGeometry(def.size.x / 2, 48, 28), makeMaterial(new THREE.Color(color)));
   } else if (type === 'cylinder') {
     object = makeCylinder(def.label, def.size.x / 2, def.size.z, new THREE.Color(color));
+  } else if (type === 'torus') {
+    const geometry = new THREE.TorusGeometry(12.5, 2.5, 24, 72);
+    object = new THREE.Mesh(geometry, makeMaterial(new THREE.Color(color)));
+  } else if (type === 'cone') {
+    const geometry = new THREE.ConeGeometry(def.size.x / 2, def.size.z, 48);
+    geometry.rotateX(Math.PI / 2);
+    object = new THREE.Mesh(geometry, makeMaterial(new THREE.Color(color)));
   } else {
     object = makeBox(def.label, def.size, new THREE.Color(color));
   }
@@ -594,12 +592,7 @@ export default function App() {
   const [multiSelect, setMultiSelect] = useState(false);
   const [printerKey, setPrinterKey] = useState('h2d');
   const [customSize, setCustomSize] = useState({ x: 256, y: 256, z: 256 });
-  const [templateSettings, setTemplateSettings] = useState({
-    phoneStand: { width: 70, depth: 45, backHeight: 60, angle: 15, lipHeight: 9 },
-    storageBox: { width: 70, depth: 50, height: 30, wall: 4 },
-    roundBase: { diameter: 70, height: 6 },
-    figureBase: { diameter: 64, height: 8, nameplate: true },
-  });
+  const [arraySettings, setArraySettings] = useState({ count: 5, x: 30, y: 0, z: 0 });
   const [booleanMessage, setBooleanMessage] = useState('');
   const [toast, setToast] = useState('');
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -926,25 +919,6 @@ export default function App() {
     showToast(`已新增 ${SHAPES[type].label}`);
   }
 
-  function addTemplate(type) {
-    pushHistory('add template');
-    const object = createParamTemplate(type, objectCountRef.current, templateSettings);
-    objectCountRef.current += 1;
-    addObject(object);
-    showToast('已新增模板');
-  }
-
-  function updateTemplateSetting(template, key, value) {
-    const nextValue = key === 'nameplate' ? value : Math.max(0.5, Number(value) || 0.5);
-    setTemplateSettings((settings) => ({
-      ...settings,
-      [template]: {
-        ...settings[template],
-        [key]: nextValue,
-      },
-    }));
-  }
-
   function addText() {
     pushHistory('add text');
     const object = createTextObject(objectCountRef.current);
@@ -1020,16 +994,66 @@ export default function App() {
   }
 
   function mirrorSelected(axis) {
-    const target = selectedRef.current;
-    if (!target) {
+    const source = primarySelected;
+    if (!source) {
       showToast('沒有選取物件');
       return;
     }
     pushHistory('mirror');
-    target.scale[axis] *= -1;
-    setSelected(readTransform(target));
+    detachSelectionGroup();
+    const clone = clonePrintable(source);
+    clone.position[axis] = -source.position[axis];
+    clone.scale[axis] *= -1;
+    clone.name = `${source.name} Mirror ${axis.toUpperCase()}`;
+    objectsRef.current.push(clone);
+    sceneRef.current.add(clone);
     refreshObjects();
-    showToast(`已鏡像 ${axis.toUpperCase()}`);
+    attachTransformForSelection([clone.uuid]);
+    showToast('已建立鏡像物件');
+  }
+
+  function alignSelected(axis, modeName) {
+    const selectedItems = objectsRef.current.filter((object) => selectedIdsRef.current.includes(object.uuid));
+    if (selectedItems.length < 2) {
+      showToast('請至少選取 2 個物件才能對齊');
+      return;
+    }
+    pushHistory('align');
+    const base = getObjectBounds(selectedItems[0]).box;
+    const targetValue = modeName === 'min' ? base.min[axis] : modeName === 'max' ? base.max[axis] : (base.min[axis] + base.max[axis]) / 2;
+    selectedItems.slice(1).forEach((object) => {
+      const box = getObjectBounds(object).box;
+      const ownValue = modeName === 'min' ? box.min[axis] : modeName === 'max' ? box.max[axis] : (box.min[axis] + box.max[axis]) / 2;
+      object.position[axis] += targetValue - ownValue;
+    });
+    refreshObjects();
+    attachTransformForSelection(selectedItems.map((object) => object.uuid));
+    showToast('已對齊物件');
+  }
+
+  function arrayDuplicate() {
+    const source = primarySelected;
+    if (!source) {
+      showToast('沒有選取物件');
+      return;
+    }
+    const count = Math.max(2, Math.floor(Number(arraySettings.count) || 2));
+    pushHistory('array duplicate');
+    detachSelectionGroup();
+    const clones = [];
+    for (let i = 1; i < count; i += 1) {
+      const clone = clonePrintable(source);
+      clone.name = `${source.name} Array ${i + 1}`;
+      clone.position.x = source.position.x + i * (Number(arraySettings.x) || 0);
+      clone.position.y = source.position.y + i * (Number(arraySettings.y) || 0);
+      clone.position.z = source.position.z + i * (Number(arraySettings.z) || 0);
+      objectsRef.current.push(clone);
+      sceneRef.current.add(clone);
+      clones.push(clone);
+    }
+    refreshObjects();
+    attachTransformForSelection([source.uuid, ...clones.map((clone) => clone.uuid)]);
+    showToast('已建立陣列複製');
   }
 
   function resetCameraView() {
@@ -1176,6 +1200,12 @@ export default function App() {
         if (item) applyModeAndColor(item, item.userData.mode || 'solid', value);
       });
       showToast('已更新顏色');
+    } else if (path === 'applyBevel') {
+      pushHistory('bevel');
+      object.userData.bevelRadius = Math.max(0, Number(value.radius) || 0);
+      object.userData.bevelSegments = Math.max(1, Number(value.segments) || 1);
+      rebuildCubeGeometry(object);
+      showToast('已套用圓角');
     } else if (path === 'bevelRadius' || path === 'bevelSegments') {
       pushHistory('bevel');
       object.userData[path] = Math.max(path === 'bevelSegments' ? 1 : 0, Number(value) || 0);
@@ -1293,6 +1323,7 @@ export default function App() {
           <button onClick={dropSelectedToPlate} disabled={!selectedIds.length}>貼齊平台</button>
           <button onClick={() => mirrorSelected('x')} disabled={!selectedIds.length}>鏡像 X</button>
           <button onClick={() => mirrorSelected('y')} disabled={!selectedIds.length}>鏡像 Y</button>
+          <button onClick={() => mirrorSelected('z')} disabled={!selectedIds.length}>鏡像 Z</button>
           <button onClick={groupSelected} disabled={selectedIds.length < 2}>群組</button>
           <button onClick={ungroupSelected} disabled={!primarySelected?.isGroup}>取消群組</button>
           <button onClick={mergeSelected} disabled={selectedIds.length < 2}>合併</button>
@@ -1331,13 +1362,37 @@ export default function App() {
           <button className="tool-button" onClick={addText}><Type size={20} /><span>文字</span></button>
         </div>
         <div className="tool-section">
-          <span className="section-label">模板</span>
-          {TEMPLATES.map((template) => {
-            const Icon = template.icon;
-            return <button key={template.type} className="tool-button" onClick={() => addTemplate(template.type)}><Icon size={20} /><span>{template.label}</span></button>;
-          })}
+          <span className="section-label">建模工具</span>
+          <button className="tool-button" onClick={() => setSelectedMode('solid')} disabled={!selectedIds.length}>實體 Solid</button>
+          <button className="tool-button" onClick={() => setSelectedMode('hole')} disabled={!selectedIds.length}>打洞 Hole</button>
+          <button className="tool-button" onClick={mergeSelected} disabled={selectedIds.length < 2}>合併 Merge</button>
+          <button className="tool-button" onClick={applyHole} disabled={selectedIds.length < 2}>套用打洞</button>
+          <button className="tool-button" onClick={() => mirrorSelected('x')} disabled={!selectedIds.length}>Mirror X</button>
+          <button className="tool-button" onClick={() => mirrorSelected('y')} disabled={!selectedIds.length}>Mirror Y</button>
+          <button className="tool-button" onClick={() => mirrorSelected('z')} disabled={!selectedIds.length}>Mirror Z</button>
         </div>
-        <TemplateSettings settings={templateSettings} onChange={updateTemplateSetting} />
+        <div className="tool-section compact-tools">
+          <span className="section-label">對齊 Align</span>
+          <div className="mini-grid">
+            <button onClick={() => alignSelected('x', 'min')} disabled={selectedIds.length < 2}>X 左</button>
+            <button onClick={() => alignSelected('x', 'center')} disabled={selectedIds.length < 2}>X 中</button>
+            <button onClick={() => alignSelected('x', 'max')} disabled={selectedIds.length < 2}>X 右</button>
+            <button onClick={() => alignSelected('y', 'min')} disabled={selectedIds.length < 2}>Y 前</button>
+            <button onClick={() => alignSelected('y', 'center')} disabled={selectedIds.length < 2}>Y 中</button>
+            <button onClick={() => alignSelected('y', 'max')} disabled={selectedIds.length < 2}>Y 後</button>
+            <button onClick={() => alignSelected('z', 'min')} disabled={selectedIds.length < 2}>Z 底</button>
+            <button onClick={() => alignSelected('z', 'center')} disabled={selectedIds.length < 2}>Z 中</button>
+            <button onClick={() => alignSelected('z', 'max')} disabled={selectedIds.length < 2}>Z 頂</button>
+          </div>
+        </div>
+        <div className="tool-section array-panel">
+          <span className="section-label">陣列複製</span>
+          <MiniNumber label="數量" value={arraySettings.count} onChange={(value) => setArraySettings((settings) => ({ ...settings, count: value }))} />
+          <MiniNumber label="X 間距" value={arraySettings.x} onChange={(value) => setArraySettings((settings) => ({ ...settings, x: value }))} />
+          <MiniNumber label="Y 間距" value={arraySettings.y} onChange={(value) => setArraySettings((settings) => ({ ...settings, y: value }))} />
+          <MiniNumber label="Z 間距" value={arraySettings.z} onChange={(value) => setArraySettings((settings) => ({ ...settings, z: value }))} />
+          <button className="tool-button" onClick={arrayDuplicate} disabled={!selectedIds.length}>建立陣列</button>
+        </div>
         <div className="tool-section">
           <span className="section-label">變形工具</span>
           <div className="segmented">
@@ -1395,6 +1450,7 @@ export default function App() {
               <label className="field"><span>物件模式</span><select value={primarySelected?.userData.mode || 'solid'} onChange={(event) => updateSelected('mode', null, event.target.value)}><option value="solid">Solid</option><option value="hole">Hole</option></select></label>
               <label className="field"><span>顏色</span><input type="color" value={primarySelected?.userData.color || '#38bdf8'} onChange={(event) => updateSelected('color', null, event.target.value)} /></label>
             </div>
+            <div className="notice">Hole 物件不會被列印，只用來切掉 Solid。</div>
             <TransformFields title="位置" unit="mm" data={selected.position} onChange={(axis, value) => updateSelected('position', axis, value)} />
             <TransformFields title="旋轉" unit="deg" data={selected.rotation} onChange={(axis, value) => updateSelected('rotation', axis, value)} step="15" />
             <TransformFields title="實際尺寸" unit="mm" data={selected.dimensions} onChange={(axis, value) => updateSelected('dimensions', axis, value)} step="1" labels={{ x: '寬 X', y: '深 Y', z: '高 Z' }} />
@@ -1427,13 +1483,22 @@ function TransformFields({ title, data, onChange, step = '0.1', unit, labels = {
 }
 
 function BevelFields({ selected, onChange }) {
+  const [radius, setRadius] = useState(selected.bevelRadius);
+  const [segments, setSegments] = useState(selected.bevelSegments);
+
+  useEffect(() => {
+    setRadius(selected.bevelRadius);
+    setSegments(selected.bevelSegments);
+  }, [selected.id, selected.bevelRadius, selected.bevelSegments]);
+
   return (
     <section className="printer-card">
       <div className="card-title">倒角 / 圓角</div>
       <div className="row-fields">
-        <label className="field"><span>倒角半徑 mm</span><input type="number" step="0.5" min="0" value={selected.bevelRadius} onChange={(event) => onChange('bevelRadius', null, event.target.value)} /></label>
-        <label className="field"><span>倒角段數</span><input type="number" step="1" min="1" value={selected.bevelSegments} onChange={(event) => onChange('bevelSegments', null, event.target.value)} /></label>
+        <label className="field"><span>圓角半徑 mm</span><input type="number" step="0.5" min="0" value={radius} onChange={(event) => setRadius(event.target.value)} /></label>
+        <label className="field"><span>圓角段數</span><input type="number" step="1" min="1" value={segments} onChange={(event) => setSegments(event.target.value)} /></label>
       </div>
+      <button className="wide-action" onClick={() => onChange('applyBevel', null, { radius, segments })}>套用圓角</button>
     </section>
   );
 }
@@ -1449,43 +1514,6 @@ function TextFields({ selected, onChange }) {
         <label className="field"><span>厚度 mm</span><input type="number" value={settings.depth} onChange={(event) => onChange('textSettings', 'depth', event.target.value)} /></label>
       </div>
       <label className="field"><span>對齊方式</span><select value={settings.align} onChange={(event) => onChange('textSettings', 'align', event.target.value)}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
-    </section>
-  );
-}
-
-function TemplateSettings({ settings, onChange }) {
-  return (
-    <section className="template-settings">
-      <span className="section-label">模板設定</span>
-      <details>
-        <summary>手機支架</summary>
-        <MiniNumber label="寬度" value={settings.phoneStand.width} onChange={(value) => onChange('phoneStand', 'width', value)} />
-        <MiniNumber label="深度" value={settings.phoneStand.depth} onChange={(value) => onChange('phoneStand', 'depth', value)} />
-        <MiniNumber label="背板高度" value={settings.phoneStand.backHeight} onChange={(value) => onChange('phoneStand', 'backHeight', value)} />
-        <MiniNumber label="背板角度" value={settings.phoneStand.angle} onChange={(value) => onChange('phoneStand', 'angle', value)} />
-        <MiniNumber label="止滑唇高度" value={settings.phoneStand.lipHeight} onChange={(value) => onChange('phoneStand', 'lipHeight', value)} />
-      </details>
-      <details>
-        <summary>方形收納盒</summary>
-        <MiniNumber label="寬度" value={settings.storageBox.width} onChange={(value) => onChange('storageBox', 'width', value)} />
-        <MiniNumber label="深度" value={settings.storageBox.depth} onChange={(value) => onChange('storageBox', 'depth', value)} />
-        <MiniNumber label="高度" value={settings.storageBox.height} onChange={(value) => onChange('storageBox', 'height', value)} />
-        <MiniNumber label="牆厚" value={settings.storageBox.wall} onChange={(value) => onChange('storageBox', 'wall', value)} />
-      </details>
-      <details>
-        <summary>圓形底座</summary>
-        <MiniNumber label="直徑" value={settings.roundBase.diameter} onChange={(value) => onChange('roundBase', 'diameter', value)} />
-        <MiniNumber label="高度" value={settings.roundBase.height} onChange={(value) => onChange('roundBase', 'height', value)} />
-      </details>
-      <details>
-        <summary>公仔底座</summary>
-        <MiniNumber label="直徑" value={settings.figureBase.diameter} onChange={(value) => onChange('figureBase', 'diameter', value)} />
-        <MiniNumber label="高度" value={settings.figureBase.height} onChange={(value) => onChange('figureBase', 'height', value)} />
-        <label className="mini-check">
-          <input type="checkbox" checked={settings.figureBase.nameplate} onChange={(event) => onChange('figureBase', 'nameplate', event.target.checked)} />
-          <span>名牌</span>
-        </label>
-      </details>
     </section>
   );
 }

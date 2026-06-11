@@ -362,31 +362,6 @@ input[type="color"] {
   font-size: 13px;
 }
 
-.template-settings {
-  display: grid;
-  gap: 9px;
-  padding: 12px;
-  border: 1px solid #273243;
-  border-radius: 8px;
-  background: #111923;
-}
-
-.template-settings details {
-  display: grid;
-  gap: 8px;
-  border: 1px solid #263244;
-  border-radius: 7px;
-  padding: 8px;
-  background: #0f1722;
-}
-
-.template-settings summary {
-  cursor: pointer;
-  color: #dbeafe;
-  font-size: 13px;
-  font-weight: 800;
-}
-
 .mini-field,
 .mini-check {
   display: grid;
@@ -403,6 +378,43 @@ input[type="color"] {
 
 .mini-field input {
   height: 32px;
+}
+
+.mini-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.mini-grid button {
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid #273243;
+  border-radius: 7px;
+  color: #dbeafe;
+  background: #111a28;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mini-grid button:hover:not(:disabled) {
+  border-color: #38bdf8;
+  background: #163049;
+}
+
+.array-panel .tool-button {
+  margin-top: 4px;
+}
+
+.wide-action {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #38bdf8;
+  border-radius: 7px;
+  color: #e0f2fe;
+  background: #12324b;
+  font-weight: 900;
 }
 
 .mini-check {
