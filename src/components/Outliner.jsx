@@ -1,3 +1,5 @@
+import React from 'react';
+
 export default function Outliner({ objects, selectedIds, onSelect, onRename, onToggleVisibility, onToggleLock }) {
   if (!objects.length) return <div className="empty-state compact">No objects yet</div>;
   return (

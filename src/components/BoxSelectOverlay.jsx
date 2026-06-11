@@ -1,3 +1,5 @@
+import React from 'react';
+
 export default function BoxSelectOverlay({ rect, mountRef }) {
   if (!rect) return null;
   const viewportRect = mountRef.current?.getBoundingClientRect();

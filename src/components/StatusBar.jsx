@@ -1,3 +1,5 @@
+import React from 'react';
+
 export default function StatusBar({ workflow, editMode, mode, selectedCount, lockedAxis, operationStyle, brushMode, boxSelectActive, appInfo, version }) {
   const tool = editMode === 'sculpt' ? `Sculpt ${brushMode}` : boxSelectActive ? 'Box Select' : mode;
   const hint = operationStyle === 'maya'

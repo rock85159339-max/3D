@@ -1,3 +1,5 @@
+import React from 'react';
+
 export default function ViewCube({ cameraProjection, onView, onToggleProjection }) {
   return (
     <div className="view-buttons">

@@ -1,3 +1,5 @@
+import React from 'react';
+
 export default function PreferencesPanel({ preferences, cameraProjection, onChange, onClose, onProjectionChange }) {
   return (
     <section className="preferences-panel" onClick={(event) => event.stopPropagation()}>

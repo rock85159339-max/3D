@@ -1,3 +1,5 @@
+import React from 'react';
+
 export default function GuidePanel({ onClose, onNeverShow }) {
   return (
     <section className="guide-panel">
