@@ -26,9 +26,21 @@ import './styles.css';
 import LeftPanel from './components/LeftPanel.jsx';
 import RightPanel from './components/RightPanel.jsx';
 import TopToolbar from './components/TopToolbar.jsx';
+import PreferencesPanel from './components/PreferencesPanel.jsx';
+import Outliner from './components/Outliner.jsx';
+import ContextMenu from './components/ContextMenu.jsx';
+import StatusBar from './components/StatusBar.jsx';
+import GuidePanel from './components/GuidePanel.jsx';
+import ViewCube from './components/ViewCube.jsx';
+import BoxSelectOverlay from './components/BoxSelectOverlay.jsx';
+import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
+import { APP_INFO, APP_VERSION } from './data/changelog.js';
+import { applyCameraView, applyOrbitControlStyle, focusCameraOnBox as focusCameraOnBoxUtil, toggleCameraProjectionFov } from './utils/cameraUtils.js';
 
 const font = new FontLoader().parse(helvetikerFont);
 const evaluator = new Evaluator();
+const MAX_HISTORY = 50;
+const LARGE_UNDO_VERTEX_THRESHOLD = 250000;
 
 const PRINTERS = {
   a1mini: { label: 'Bambu A1 mini', size: { x: 180, y: 180, z: 180 } },
@@ -185,6 +197,10 @@ function getPrintableMeshes(object) {
     if (child.isMesh && !child.userData.helper) meshes.push(child);
   });
   return meshes;
+}
+
+function countObjectVertices(object) {
+  return getPrintableMeshes(object).reduce((total, mesh) => total + (mesh.geometry?.attributes?.position?.count || 0), 0);
 }
 
 function makeEditableGeometry(mesh) {
@@ -992,6 +1008,8 @@ export default function App() {
       setContextMenu(null);
       if (event.button !== 0) return;
       if (boxSelectActiveRef.current && event.button === 0) {
+        event.preventDefault();
+        event.stopPropagation();
         boxSelectStartRef.current = { x: event.clientX, y: event.clientY };
         const nextRect = { x: event.clientX, y: event.clientY, width: 0, height: 0 };
         boxSelectRectRef.current = nextRect;
@@ -999,15 +1017,21 @@ export default function App() {
         return;
       }
       if (measureActiveRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
         pickMeasurePoint();
         return;
       }
       if (editModeRef.current === 'sculpt') {
         if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
         beginSculptStroke();
         return;
       }
       if (editModeRef.current === 'face') {
+        event.preventDefault();
+        event.stopPropagation();
         pickFaceFromPointer();
         return;
       }
@@ -1028,6 +1052,8 @@ export default function App() {
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycasterRef.current.setFromCamera(pointerRef.current, camera);
       if (boxSelectStartRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
         const start = boxSelectStartRef.current;
         const nextRect = {
           x: Math.min(start.x, event.clientX),
@@ -1043,8 +1069,10 @@ export default function App() {
       continueSculptStroke();
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (event) => {
       if (boxSelectStartRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
         selectObjectsInBox(boxSelectRectRef.current);
         boxSelectStartRef.current = null;
         boxSelectRectRef.current = null;
@@ -1068,6 +1096,7 @@ export default function App() {
 
     const onContextMenu = (event) => {
       event.preventDefault();
+      event.stopPropagation();
       const rect = renderer.domElement.getBoundingClientRect();
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -1132,87 +1161,29 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [projectName, printerKey, customSize, objects, historyVersion]);
 
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      const tagName = event.target?.tagName?.toLowerCase();
-      const typing = tagName === 'input' || tagName === 'textarea' || tagName === 'select' || event.target?.isContentEditable;
-      if (event.ctrlKey && event.key.toLowerCase() === 'z') {
-        event.preventDefault();
-        undo();
-      } else if (event.key.toLowerCase() === 'y') {
-        if (!event.ctrlKey) return;
-        event.preventDefault();
-        redo();
-      } else if (!typing && event.key.toLowerCase() === 'w') {
-        setMode('translate');
-      } else if (!typing && event.key.toLowerCase() === 'g') {
-        setMode('translate');
-      } else if (!typing && event.key.toLowerCase() === 'e') {
-        setMode('rotate');
-      } else if (!typing && event.key.toLowerCase() === 'r') {
-        setMode(event.shiftKey ? 'rotate' : 'rotate');
-      } else if (!typing && event.key.toLowerCase() === 's') {
-        setMode('scale');
-      } else if (!typing && event.key === 'Delete') {
-        deleteSelectedWithConfirm();
-      } else if (!typing && event.key.toLowerCase() === 'x') {
-        if (selectedIdsRef.current.length && ['translate', 'rotate', 'scale'].includes(modeRef.current)) setAxisLock('x');
-        else deleteSelectedWithConfirm();
-      } else if (!typing && event.key.toLowerCase() === 'y') {
-        if (selectedIdsRef.current.length && ['translate', 'rotate', 'scale'].includes(modeRef.current)) setAxisLock('y');
-      } else if (!typing && event.key.toLowerCase() === 'z') {
-        if (selectedIdsRef.current.length && ['translate', 'rotate', 'scale'].includes(modeRef.current)) setAxisLock('z');
-      } else if (!typing && event.key === '1') {
-        switchWorkflow('model');
-      } else if (!typing && event.key === '2') {
-        switchWorkflow('face');
-      } else if (!typing && event.key === '3') {
-        switchWorkflow('sculpt');
-      } else if (!typing && event.key === '4') {
-        switchWorkflow('prep');
-      } else if (!typing && event.key === '5') {
-        switchWorkflow('export');
-      } else if (!typing && event.key === '[') {
-        setSculptSettings((settings) => ({ ...settings, radius: Math.max(1, Number(settings.radius) - 1) }));
-      } else if (!typing && event.key === ']') {
-        setSculptSettings((settings) => ({ ...settings, radius: Math.min(200, Number(settings.radius) + 1) }));
-      } else if (!typing && event.key === '-') {
-        setSculptSettings((settings) => ({ ...settings, strength: Math.max(0, roundNumber(Number(settings.strength) - 0.05, 2)) }));
-      } else if (!typing && event.key === '=') {
-        setSculptSettings((settings) => ({ ...settings, strength: Math.min(1, roundNumber(Number(settings.strength) + 0.05, 2)) }));
-      } else if (!typing && event.key === 'Tab') {
-        event.preventDefault();
-        if (event.ctrlKey) switchWorkflow('sculpt');
-        else switchWorkflow(activeWorkflowRef.current === 'face' ? 'model' : 'face');
-      } else if (!typing && event.key === 'Escape') {
-        setAxisLock(null);
-        setBoxSelectActive(false);
-        setContextMenu(null);
-        attachTransformForSelection([]);
-      } else if (!typing && event.key.toLowerCase() === 'f') {
-        focusSelectedObject();
-      } else if (!typing && event.key === 'Home') {
-        frameAllObjects();
-      } else if (!typing && event.key.toLowerCase() === 'a' && prefsRef.current?.operationStyle === 'maya') {
-        frameAllObjects();
-      } else if (!typing && event.key.toLowerCase() === 'b') {
-        setBoxSelectActive(true);
-        showToast('框選模式：拖曳矩形選取物件，Esc 退出');
-      } else if (!typing && event.shiftKey && event.key.toLowerCase() === 'd') {
-        duplicateSelected();
-      } else if (!typing && event.code === 'Numpad1') {
-        setCameraView('front');
-      } else if (!typing && event.code === 'Numpad3') {
-        setCameraView('right');
-      } else if (!typing && event.code === 'Numpad7') {
-        setCameraView('top');
-      } else if (!typing && event.code === 'Numpad5') {
-        toggleProjection();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  useKeyboardShortcuts({
+    activeWorkflowRef,
+    modeRef,
+    prefsRef,
+    selectedIdsRef,
+    undo,
+    redo,
+    setMode,
+    switchWorkflow,
+    setSculptSettings,
+    roundNumber,
+    setAxisLock,
+    setBoxSelectActive,
+    setContextMenu,
+    attachTransformForSelection,
+    focusSelectedObject,
+    frameAllObjects,
+    duplicateSelected,
+    toggleProjection,
+    setCameraView,
+    deleteSelectedWithConfirm,
+    showToast,
+  });
 
   useEffect(() => {
     multiSelectRef.current = multiSelect;
@@ -1264,25 +1235,7 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem('printModeler.preferences', JSON.stringify(preferences));
-    const orbit = orbitRef.current;
-    if (!orbit) return;
-    const speed = Math.max(0.1, Number(prefs.mouseSensitivity) || 1);
-    orbit.rotateSpeed = speed;
-    orbit.panSpeed = speed;
-    orbit.zoomSpeed = speed;
-    if (prefs.operationStyle === 'maya') {
-      orbit.mouseButtons = {
-        LEFT: THREE.MOUSE.ROTATE,
-        MIDDLE: THREE.MOUSE.PAN,
-        RIGHT: THREE.MOUSE.DOLLY,
-      };
-    } else {
-      orbit.mouseButtons = {
-        LEFT: null,
-        MIDDLE: THREE.MOUSE.ROTATE,
-        RIGHT: THREE.MOUSE.PAN,
-      };
-    }
+    applyOrbitControlStyle(orbitRef.current, THREE, prefs.operationStyle, prefs.mouseSensitivity);
   }, [preferences]);
 
   useEffect(() => {
@@ -1319,6 +1272,16 @@ export default function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(''), 2500);
   }
 
+  function runSafe(label, action) {
+    try {
+      return action();
+    } catch (error) {
+      console.error(`${label} failed`, error);
+      showToast(`${label} 失敗：${error.message || '未知錯誤'}`);
+      return null;
+    }
+  }
+
   function makeProjectPayload() {
     return {
       version: 3,
@@ -1351,8 +1314,10 @@ export default function App() {
   }
 
   function pushHistory(label = 'change') {
+    const vertexCount = objectsRef.current.reduce((total, object) => total + countObjectVertices(object), 0);
+    if (vertexCount > LARGE_UNDO_VERTEX_THRESHOLD) showToast('大型模型 Undo 可能較慢');
     historyRef.current.push(makeSnapshot());
-    if (historyRef.current.length > 80) historyRef.current.shift();
+    if (historyRef.current.length > MAX_HISTORY) historyRef.current.shift();
     redoRef.current = [];
     setHistoryVersion((version) => version + 1);
     return label;
@@ -1748,7 +1713,7 @@ export default function App() {
     if (orbitRef.current) orbitRef.current.enabled = true;
     if (sculptChangedRef.current && sculptSnapshotRef.current) {
       historyRef.current.push(sculptSnapshotRef.current);
-      if (historyRef.current.length > 80) historyRef.current.shift();
+      if (historyRef.current.length > MAX_HISTORY) historyRef.current.shift();
       redoRef.current = [];
       setHistoryVersion((version) => version + 1);
       showToast('已完成雕刻筆刷');
@@ -1996,44 +1961,7 @@ export default function App() {
   function setCameraView(view) {
     const camera = cameraRef.current;
     const orbit = orbitRef.current;
-    if (!camera || !orbit) return;
-    const distance = 340;
-    const positions = {
-      front: [0, -distance, 80],
-      back: [0, distance, 80],
-      left: [-distance, 0, 80],
-      right: [distance, 0, 80],
-      top: [0, 0, distance],
-      bottom: [0, 0, -distance],
-      iso: [220, -260, 180],
-    };
-    camera.position.set(...positions[view]);
-    camera.up.set(0, 0, 1);
-    if (view === 'top' || view === 'bottom') camera.up.set(0, 1, 0);
-    orbit.target.set(0, 0, 25);
-    orbit.update();
-  }
-
-  function focusCameraOnBox(box, fallbackDistance = 220) {
-    const camera = cameraRef.current;
-    const orbit = orbitRef.current;
-    if (!camera || !orbit || !box || box.isEmpty()) return;
-    const center = new THREE.Vector3();
-    const size = new THREE.Vector3();
-    box.getCenter(center);
-    box.getSize(size);
-    const radius = Math.max(size.x, size.y, size.z, 20) * 0.5;
-    const direction = camera.position.clone().sub(orbit.target);
-    if (direction.lengthSq() < 1) direction.set(1, -1, 0.7);
-    direction.normalize();
-    const fov = THREE.MathUtils.degToRad(camera.fov || 45);
-    const distance = Math.max(fallbackDistance, radius / Math.tan(fov / 2) + radius);
-    orbit.target.copy(center);
-    camera.position.copy(center).addScaledVector(direction, distance);
-    camera.near = 0.1;
-    camera.far = Math.max(3000, distance * 8);
-    camera.updateProjectionMatrix();
-    orbit.update();
+    applyCameraView(camera, orbit, view);
   }
 
   function focusSelectedObject() {
@@ -2042,7 +1970,7 @@ export default function App() {
       showToast('Please select an object first');
       return;
     }
-    focusCameraOnBox(getObjectBounds(target).box, 80);
+    focusCameraOnBoxUtil(cameraRef.current, orbitRef.current, getObjectBounds(target).box, 80);
     showToast('Focused selected object');
   }
 
@@ -2055,19 +1983,17 @@ export default function App() {
     });
     box.expandByPoint(new THREE.Vector3(-printerSize.x / 2, -printerSize.y / 2, 0));
     box.expandByPoint(new THREE.Vector3(printerSize.x / 2, printerSize.y / 2, printerSize.z * 0.4));
-    focusCameraOnBox(box, hasContent ? 160 : 260);
+    focusCameraOnBoxUtil(cameraRef.current, orbitRef.current, box, hasContent ? 160 : 260);
     showToast('Framed scene');
   }
 
   function toggleProjection() {
     const camera = cameraRef.current;
     if (!camera) return;
-    const next = cameraProjectionRef.current === 'perspective' ? 'orthographic' : 'perspective';
+    const next = toggleCameraProjectionFov(camera, cameraProjectionRef.current);
     setCameraProjection(next);
     cameraProjectionRef.current = next;
     localStorage.setItem('printModeler.cameraProjection', next);
-    camera.fov = next === 'orthographic' ? 8 : 45;
-    camera.updateProjectionMatrix();
     showToast(next === 'orthographic' ? 'Ortho view enabled' : 'Perspective view enabled');
   }
 
@@ -2213,29 +2139,31 @@ export default function App() {
   }
 
   function mergeSelected() {
-    detachSelectionGroup();
-    const solids = selectedIdsRef.current.map((id) => objectsRef.current.find((item) => item.uuid === id)).filter((object) => object?.userData.mode !== 'hole');
-    const meshes = solids.flatMap(getPrintableMeshes);
-    if (meshes.length < 2) {
-      showToast('請至少選取 2 個物件才能合併');
-      return;
-    }
-    pushHistory('merge');
-    let geometry;
-    try {
-      geometry = csgCombine(meshes, ADDITION)?.geometry;
-    } catch {
-      geometry = mergeGeometries(meshes.map(meshToWorldGeometry), false);
-    }
-    if (!geometry) return;
-    const merged = createMeshFromGeometry('合併物件', geometry, '#38bdf8');
-    solids.forEach((object) => sceneRef.current.remove(object));
-    objectsRef.current = objectsRef.current.filter((object) => !solids.includes(object));
-    objectsRef.current.push(merged);
-    sceneRef.current.add(merged);
-    refreshObjects();
-    attachTransformForSelection([merged.uuid]);
-    showToast('已合併物件');
+    return runSafe('Merge', () => {
+      detachSelectionGroup();
+      const solids = selectedIdsRef.current.map((id) => objectsRef.current.find((item) => item.uuid === id)).filter((object) => object?.userData.mode !== 'hole');
+      const meshes = solids.flatMap(getPrintableMeshes);
+      if (meshes.length < 2) {
+        showToast('請至少選取 2 個物件才能合併');
+        return;
+      }
+      pushHistory('merge');
+      let geometry;
+      try {
+        geometry = csgCombine(meshes, ADDITION)?.geometry;
+      } catch {
+        geometry = mergeGeometries(meshes.map(meshToWorldGeometry), false);
+      }
+      if (!geometry) return;
+      const merged = createMeshFromGeometry('合併物件', geometry, '#38bdf8');
+      solids.forEach((object) => sceneRef.current.remove(object));
+      objectsRef.current = objectsRef.current.filter((object) => !solids.includes(object));
+      objectsRef.current.push(merged);
+      sceneRef.current.add(merged);
+      refreshObjects();
+      attachTransformForSelection([merged.uuid]);
+      showToast('已合併物件');
+    });
   }
 
   function applyHole() {
@@ -2264,6 +2192,7 @@ export default function App() {
       setBooleanMessage('布林打洞完成。');
       showToast('已套用打洞');
     } catch (error) {
+      console.error('Boolean Difference failed', error);
       setBooleanMessage(`布林運算失敗：${error.message}`);
       showToast('打洞失敗，請確認 Solid 和 Hole 有重疊');
     }
@@ -2375,55 +2304,63 @@ export default function App() {
   }
 
   function subdivideSelectedModel() {
-    const target = getSelectedPrintableTarget();
-    if (!target) return;
-    const iterations = Math.max(1, Math.min(2, Math.floor(Number(printPrepSettings.subdivideIterations) || 1)));
-    const currentTriangles = target.meshes.reduce((sum, mesh) => sum + Math.floor((mesh.geometry.index ? mesh.geometry.index.count : mesh.geometry.attributes.position.count) / 3), 0);
-    if (currentTriangles * 4 ** iterations > 120000) showToast('面數過高可能影響效能');
-    pushHistory('subdivide');
-    target.meshes.forEach((mesh) => {
-      const nextGeometry = subdivideTriangleGeometry(mesh.geometry, iterations);
-      mesh.geometry.dispose();
-      mesh.geometry = nextGeometry;
+    return runSafe('Subdivide', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      const iterations = Math.max(1, Math.min(2, Math.floor(Number(printPrepSettings.subdivideIterations) || 1)));
+      const currentTriangles = target.meshes.reduce((sum, mesh) => sum + Math.floor((mesh.geometry.index ? mesh.geometry.index.count : mesh.geometry.attributes.position.count) / 3), 0);
+      if (currentTriangles * 4 ** iterations > 120000) showToast('面數過高可能影響效能');
+      pushHistory('subdivide');
+      target.meshes.forEach((mesh) => {
+        const nextGeometry = subdivideTriangleGeometry(mesh.geometry, iterations);
+        mesh.geometry.dispose();
+        mesh.geometry = nextGeometry;
+      });
+      finishPrintPrepChange(target.object, '已套用細分');
     });
-    finishPrintPrepChange(target.object, '已套用細分');
   }
 
   function smoothSelectedModel() {
-    const target = getSelectedPrintableTarget();
-    if (!target) return;
-    pushHistory('smooth model');
-    target.meshes.forEach((mesh) => {
-      const nextGeometry = smoothGeometryLaplacian(mesh.geometry, printPrepSettings.smoothStrength, printPrepSettings.smoothIterations);
-      mesh.geometry.dispose();
-      mesh.geometry = nextGeometry;
+    return runSafe('Smooth', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('smooth model');
+      target.meshes.forEach((mesh) => {
+        const nextGeometry = smoothGeometryLaplacian(mesh.geometry, printPrepSettings.smoothStrength, printPrepSettings.smoothIterations);
+        mesh.geometry.dispose();
+        mesh.geometry = nextGeometry;
+      });
+      finishPrintPrepChange(target.object, '已平滑模型');
     });
-    finishPrintPrepChange(target.object, '已平滑模型');
   }
 
   function remeshSelectedModel() {
-    const target = getSelectedPrintableTarget();
-    if (!target) return;
-    pushHistory('remesh');
-    target.meshes.forEach((mesh) => {
-      const nextGeometry = remeshGeometrySimple(mesh.geometry, printPrepSettings.remeshEdgeLength, printPrepSettings.remeshKeepVolume ? 1 : 3);
-      mesh.geometry.dispose();
-      mesh.geometry = nextGeometry;
+    return runSafe('Remesh', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('remesh');
+      target.meshes.forEach((mesh) => {
+        const nextGeometry = remeshGeometrySimple(mesh.geometry, printPrepSettings.remeshEdgeLength, printPrepSettings.remeshKeepVolume ? 1 : 3);
+        mesh.geometry.dispose();
+        mesh.geometry = nextGeometry;
+      });
+      finishPrintPrepChange(target.object, '已套用 Remesh 簡化版');
     });
-    finishPrintPrepChange(target.object, '已套用 Remesh 簡化版');
   }
 
   function recalculateSelectedNormals() {
-    const target = getSelectedPrintableTarget();
-    if (!target) return;
-    pushHistory('recalculate normals');
-    target.meshes.forEach((mesh) => {
-      makeEditableGeometry(mesh);
-      mesh.geometry.computeVertexNormals();
-      mesh.geometry.attributes.position.needsUpdate = true;
-      if (mesh.geometry.attributes.normal) mesh.geometry.attributes.normal.needsUpdate = true;
+    return runSafe('Recalculate Normals', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('recalculate normals');
+      target.meshes.forEach((mesh) => {
+        makeEditableGeometry(mesh);
+        mesh.geometry.computeVertexNormals();
+        mesh.geometry.attributes.position.needsUpdate = true;
+        if (mesh.geometry.attributes.normal) mesh.geometry.attributes.normal.needsUpdate = true;
+      });
+      finishPrintPrepChange(target.object, '已重新計算法線');
     });
-    finishPrintPrepChange(target.object, '已重新計算法線');
   }
 
   function placeSelectedOnBed() {
@@ -2447,37 +2384,41 @@ export default function App() {
   }
 
   function applySelectedTransform() {
-    const target = getSelectedPrintableTarget();
-    if (!target) return;
-    pushHistory('apply transform');
-    detachSelectionGroup();
-    target.object.updateWorldMatrix(true, true);
-    target.object.traverse((child) => {
-      if (!child.isMesh || !child.geometry || child.userData.helper) return;
-      child.updateWorldMatrix(true, false);
-      child.geometry.applyMatrix4(child.matrixWorld);
-      child.position.set(0, 0, 0);
-      child.rotation.set(0, 0, 0);
-      child.scale.set(1, 1, 1);
-      child.updateMatrixWorld(true);
+    return runSafe('Apply Transform', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('apply transform');
+      detachSelectionGroup();
+      target.object.updateWorldMatrix(true, true);
+      target.object.traverse((child) => {
+        if (!child.isMesh || !child.geometry || child.userData.helper) return;
+        child.updateWorldMatrix(true, false);
+        child.geometry.applyMatrix4(child.matrixWorld);
+        child.position.set(0, 0, 0);
+        child.rotation.set(0, 0, 0);
+        child.scale.set(1, 1, 1);
+        child.updateMatrixWorld(true);
+      });
+      target.object.position.set(0, 0, 0);
+      target.object.rotation.set(0, 0, 0);
+      target.object.scale.set(1, 1, 1);
+      finishPrintPrepChange(target.object, '已套用變形');
+      attachTransformForSelection([target.object.uuid]);
     });
-    target.object.position.set(0, 0, 0);
-    target.object.rotation.set(0, 0, 0);
-    target.object.scale.set(1, 1, 1);
-    finishPrintPrepChange(target.object, '已套用變形');
-    attachTransformForSelection([target.object.uuid]);
   }
 
   function applyPlaneCut() {
-    const target = getSelectedPrintableTarget();
-    if (!target) return;
-    pushHistory('plane cut');
-    target.meshes.forEach((mesh) => {
-      const nextGeometry = planeCutGeometry(mesh.geometry, planeCutSettings.axis, Number(planeCutSettings.position) || 0, planeCutSettings.keep);
-      mesh.geometry.dispose();
-      mesh.geometry = nextGeometry;
+    return runSafe('Plane Cut', () => {
+      const target = getSelectedPrintableTarget();
+      if (!target) return;
+      pushHistory('plane cut');
+      target.meshes.forEach((mesh) => {
+        const nextGeometry = planeCutGeometry(mesh.geometry, planeCutSettings.axis, Number(planeCutSettings.position) || 0, planeCutSettings.keep);
+        mesh.geometry.dispose();
+        mesh.geometry = nextGeometry;
+      });
+      finishPrintPrepChange(target.object, '已裁切模型，可能需要修補開口');
     });
-    finishPrintPrepChange(target.object, '已裁切模型，可能需要修補開口');
   }
 
   function buildMeshCheckResults(targetObjects) {
@@ -2628,30 +2569,32 @@ export default function App() {
   }
 
   function exportModel(format) {
-    detachSelectionGroup();
-    if (!objectsRef.current.length) {
-      showToast('沒有可匯出的物件');
-      return;
-    }
-    if (format === 'stl') {
-      const printableObjects = objectsRef.current.filter((object) => object.userData.mode !== 'hole');
-      const results = buildMeshCheckResults(printableObjects);
-      setMeshCheckResults(results);
-      const hasIssue = results.some((item) => item.status !== 'ok');
-      if (hasIssue && !window.confirm('模型可能有問題，仍要匯出嗎？')) {
-        switchWorkflow('export');
-        showToast('已取消匯出 STL');
+    return runSafe(`Export ${format.toUpperCase()}`, () => {
+      detachSelectionGroup();
+      if (!objectsRef.current.length) {
+        showToast('沒有可匯出的物件');
         return;
       }
-    }
-    const group = new THREE.Group();
-    objectsRef.current.filter((object) => object.userData.mode !== 'hole').forEach((object) => group.add(object.clone(true)));
-    group.updateMatrixWorld(true);
-    const exporter = format === 'obj' ? new OBJExporter() : new STLExporter();
-    const data = format === 'obj' ? exporter.parse(group) : exporter.parse(group, { binary: false });
-    const blob = new Blob([data], { type: format === 'obj' ? 'text/plain' : 'model/stl' });
-    downloadBlob(blob, `print-model.${format}`);
-    showToast(`已匯出 ${format.toUpperCase()}`);
+      if (format === 'stl') {
+        const printableObjects = objectsRef.current.filter((object) => object.userData.mode !== 'hole');
+        const results = buildMeshCheckResults(printableObjects);
+        setMeshCheckResults(results);
+        const hasIssue = results.some((item) => item.status !== 'ok');
+        if (hasIssue && !window.confirm('模型可能有問題，仍要匯出嗎？')) {
+          switchWorkflow('export');
+          showToast('已取消匯出 STL');
+          return;
+        }
+      }
+      const group = new THREE.Group();
+      objectsRef.current.filter((object) => object.userData.mode !== 'hole').forEach((object) => group.add(object.clone(true)));
+      group.updateMatrixWorld(true);
+      const exporter = format === 'obj' ? new OBJExporter() : new STLExporter();
+      const data = format === 'obj' ? exporter.parse(group) : exporter.parse(group, { binary: false });
+      const blob = new Blob([data], { type: format === 'obj' ? 'text/plain' : 'model/stl' });
+      downloadBlob(blob, `print-model.${format}`);
+      showToast(`已匯出 ${format.toUpperCase()}`);
+    });
   }
 
   function saveProject() {
@@ -2665,13 +2608,11 @@ export default function App() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      try {
+      runSafe('Load JSON', () => {
         const data = JSON.parse(reader.result);
         loadProjectData(data);
         showToast('已載入專案');
-      } catch (error) {
-        setBooleanMessage(`載入失敗：${error.message}`);
-      }
+      });
     };
     reader.readAsText(file);
     event.target.value = '';
@@ -2773,23 +2714,8 @@ export default function App() {
           <span>{selected ? selected.name : '未選取物件'}</span>
         </div>
         <div ref={mountRef} className="three-viewport" />
-        <div className="view-buttons">
-          {['front', 'back', 'left', 'right', 'top', 'bottom', 'iso'].map((view) => (
-            <button key={view} onClick={() => setCameraView(view)}>{view === 'iso' ? 'ISO' : view[0].toUpperCase() + view.slice(1)}</button>
-          ))}
-          <button className="projection-toggle" onClick={toggleProjection}>{cameraProjection === 'orthographic' ? 'Ortho' : 'Perspective'}</button>
-        </div>
-        {boxSelectRect && (
-          <div
-            className="box-select-rect"
-            style={{
-              left: boxSelectRect.x - (mountRef.current?.getBoundingClientRect().left || 0),
-              top: boxSelectRect.y - (mountRef.current?.getBoundingClientRect().top || 0),
-              width: boxSelectRect.width,
-              height: boxSelectRect.height,
-            }}
-          />
-        )}
+        <ViewCube cameraProjection={cameraProjection} onView={setCameraView} onToggleProjection={toggleProjection} />
+        <BoxSelectOverlay rect={boxSelectRect} mountRef={mountRef} />
         {!objects.length && <div className="empty-scene-hint">從左側新增一個基本物件開始建模</div>}
       </section>
 
@@ -2808,7 +2734,7 @@ export default function App() {
 
         <section className="printer-card">
           <div className="card-title">Outliner</div>
-          <OutlinerPanel
+          <Outliner
             objects={objects}
             selectedIds={selectedIds}
             onSelect={updateSelection}
@@ -2918,6 +2844,8 @@ export default function App() {
         operationStyle={prefs.operationStyle}
         brushMode={sculptSettings.brushMode}
         boxSelectActive={boxSelectActive}
+        appInfo={APP_INFO}
+        version={APP_VERSION}
       />
       {contextMenu && (
         <ContextMenu
@@ -2954,166 +2882,6 @@ function TransformFields({ title, data, onChange, step = '0.1', unit, labels = {
         </label>
       ))}
     </fieldset>
-  );
-}
-
-function PreferencesPanel({ preferences, cameraProjection, onChange, onClose, onProjectionChange }) {
-  return (
-    <section className="preferences-panel" onClick={(event) => event.stopPropagation()}>
-      <div className="panel-title-row">
-        <strong>Preferences</strong>
-        <button onClick={onClose}>Close</button>
-      </div>
-      <div className="settings-grid">
-        <label className="field">
-          <span>Operation mode</span>
-          <select value={preferences.operationStyle} onChange={(event) => onChange('operationStyle', event.target.value)}>
-            <option value="blender">Blender Style</option>
-            <option value="maya">Maya Style</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>Default camera</span>
-          <select
-            value={preferences.defaultCamera}
-            onChange={(event) => {
-              onChange('defaultCamera', event.target.value);
-              if (event.target.value !== cameraProjection) onProjectionChange();
-            }}
-          >
-            <option value="perspective">Perspective</option>
-            <option value="orthographic">Orthographic</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>Mouse sensitivity</span>
-          <input type="number" min="0.1" max="5" step="0.1" value={preferences.mouseSensitivity} onChange={(event) => onChange('mouseSensitivity', Number(event.target.value) || 1)} />
-        </label>
-        <label className="field">
-          <span>Grid size mm</span>
-          <input type="number" min="1" step="1" value={preferences.gridSize} onChange={(event) => onChange('gridSize', Math.max(1, Number(event.target.value) || 10))} />
-        </label>
-        <label className="field">
-          <span>Snap distance mm</span>
-          <input type="number" min="0.1" step="0.1" value={preferences.snapDistance} onChange={(event) => onChange('snapDistance', Math.max(0.1, Number(event.target.value) || 1))} />
-        </label>
-        <label className="field">
-          <span>Theme density</span>
-          <select value={preferences.density} onChange={(event) => onChange('density', event.target.value)}>
-            <option value="comfortable">Comfortable</option>
-            <option value="compact">Compact</option>
-          </select>
-        </label>
-      </div>
-      <div className="preference-footer">
-        <span>Camera: {cameraProjection === 'orthographic' ? 'Ortho' : 'Perspective'}</span>
-        <button onClick={onProjectionChange}>Toggle Ortho / Perspective</button>
-      </div>
-    </section>
-  );
-}
-
-function OutlinerPanel({ objects, selectedIds, onSelect, onRename, onToggleVisibility, onToggleLock }) {
-  if (!objects.length) return <div className="empty-state compact">No objects yet</div>;
-  return (
-    <div className="outliner-list">
-      {objects.map((object) => (
-        <div key={object.uuid} className={`outliner-row ${selectedIds.includes(object.uuid) ? 'selected' : ''} ${object.userData.locked ? 'locked' : ''}`} onClick={(event) => onSelect(object, event.shiftKey)}>
-          <input
-            className="outliner-name"
-            value={object.name}
-            onClick={(event) => event.stopPropagation()}
-            onChange={(event) => onRename(object, event.target.value)}
-          />
-          <span className={`mode-pill ${object.userData.mode === 'hole' ? 'hole' : 'solid'}`}>{object.userData.mode === 'hole' ? 'Hole' : 'Solid'}</span>
-          <button title="Show / hide" onClick={(event) => { event.stopPropagation(); onToggleVisibility(object); }}>{object.visible === false ? 'Show' : 'Hide'}</button>
-          <button title="Lock / unlock" onClick={(event) => { event.stopPropagation(); onToggleLock(object); }}>{object.userData.locked ? 'Unlock' : 'Lock'}</button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ContextMenu({
-  menu,
-  hasSelection,
-  hasClipboard,
-  onDuplicate,
-  onCopy,
-  onPaste,
-  onDelete,
-  onSolid,
-  onHole,
-  onPlace,
-  onCenter,
-  onApply,
-  onFocus,
-  onAddShape,
-}) {
-  return (
-    <div className="context-menu" style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()}>
-      {menu.type === 'object' ? (
-        <>
-          <button disabled={!hasSelection} onClick={onCopy}>Copy</button>
-          <button disabled={!hasSelection} onClick={onDuplicate}>Duplicate</button>
-          <button disabled={!hasSelection} onClick={onDelete}>Delete</button>
-          <button disabled={!hasSelection} onClick={onSolid}>Set Solid</button>
-          <button disabled={!hasSelection} onClick={onHole}>Set Hole</button>
-          <button disabled={!hasSelection} onClick={onPlace}>Place on Bed</button>
-          <button disabled={!hasSelection} onClick={onCenter}>Center</button>
-          <button disabled={!hasSelection} onClick={onApply}>Apply Transform</button>
-          <button disabled={!hasSelection} onClick={onFocus}>Focus Object</button>
-        </>
-      ) : (
-        <>
-          <button onClick={() => onAddShape('cube')}>Add Cube</button>
-          <button onClick={() => onAddShape('sphere')}>Add Sphere</button>
-          <button onClick={() => onAddShape('cylinder')}>Add Cylinder</button>
-          <button disabled={!hasSelection} onClick={onCopy}>Copy Selection</button>
-          <button disabled={!hasClipboard} onClick={onPaste}>Paste</button>
-        </>
-      )}
-    </div>
-  );
-}
-
-function StatusBar({ workflow, editMode, mode, selectedCount, lockedAxis, operationStyle, brushMode, boxSelectActive }) {
-  const tool = editMode === 'sculpt' ? `Sculpt ${brushMode}` : boxSelectActive ? 'Box Select' : mode;
-  const hint = operationStyle === 'maya'
-    ? 'Maya: Alt+Left rotate, Alt+Middle pan, Alt+Right zoom, F focus, A frame all'
-    : 'Blender: Middle rotate, Shift+Middle pan, G move, R rotate, S scale, F focus';
-  return (
-    <footer className="status-bar">
-      <span>Mode: {workflow} / {editMode}</span>
-      <span>Tool: {tool}</span>
-      <span>Selected: {selectedCount}</span>
-      <span>Axis: {lockedAxis ? lockedAxis.toUpperCase() : 'None'}</span>
-      <span>{hint}</span>
-    </footer>
-  );
-}
-
-function GuidePanel({ onClose, onNeverShow }) {
-  return (
-    <section className="guide-panel">
-      <div>
-        <strong>操作指南</strong>
-        <p>基本操作：中鍵旋轉視角，Shift + 中鍵平移，滾輪縮放，G 移動，R 旋轉，S 縮放，F 聚焦，Tab 切換 Object / Face Mode。</p>
-        <ol>
-          <li>新增基本物件。</li>
-          <li>用 G / R / S 調整位置、旋轉與尺寸。</li>
-          <li>用 Face Mode 推拉表面。</li>
-          <li>用 Sculpt Mode 雕刻。</li>
-          <li>用 Print Prep 檢查與修復。</li>
-          <li>匯出 STL 進行 3D 列印。</li>
-        </ol>
-        <p>更多快捷鍵：Shift+D 複製，X/Y/Z 鎖定軸，B 框選，Home 縮放到全部物件，Numpad 1/3/7 切視角，Numpad 5 切換 Ortho / Perspective。</p>
-      </div>
-      <div className="guide-actions">
-        <button onClick={onClose}>關閉</button>
-        <button onClick={onNeverShow}>不再顯示</button>
-      </div>
-    </section>
   );
 }
 
