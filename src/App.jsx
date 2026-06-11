@@ -44,6 +44,30 @@ const SHAPES = {
   cone: { label: 'Cone', icon: Cylinder, size: { x: 25, y: 25, z: 35 } },
 };
 
+const RESOLUTION_PRESETS = {
+  low: {
+    label: 'Low',
+    sphere: [32, 16],
+    cylinder: 32,
+    cone: 32,
+    torus: [48, 12],
+  },
+  medium: {
+    label: 'Medium',
+    sphere: [64, 32],
+    cylinder: 64,
+    cone: 64,
+    torus: [72, 18],
+  },
+  high: {
+    label: 'High',
+    sphere: [96, 48],
+    cylinder: 96,
+    cone: 96,
+    torus: [96, 24],
+  },
+};
+
 const MODE_BUTTONS = [
   { mode: 'translate', label: '移動', icon: Move3D },
   { mode: 'rotate', label: '旋轉', icon: RotateCw },
@@ -280,6 +304,61 @@ function smoothGeometryLaplacian(sourceGeometry, strength = 0.35, iterations = 2
   return geometry;
 }
 
+function remeshGeometrySimple(sourceGeometry, targetEdgeLength = 8, smoothPasses = 2) {
+  let geometry = sourceGeometry.index ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
+  const target = Math.max(0.5, Number(targetEdgeLength) || 8);
+  for (let pass = 0; pass < 2; pass += 1) {
+    const position = geometry.attributes.position;
+    const nextPositions = [];
+    let changed = false;
+    for (let i = 0; i < position.count; i += 3) {
+      const a = new THREE.Vector3().fromBufferAttribute(position, i);
+      const b = new THREE.Vector3().fromBufferAttribute(position, i + 1);
+      const c = new THREE.Vector3().fromBufferAttribute(position, i + 2);
+      const maxEdge = Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a));
+      if (maxEdge > target * 1.35) {
+        changed = true;
+        const ab = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+        const bc = new THREE.Vector3().addVectors(b, c).multiplyScalar(0.5);
+        const ca = new THREE.Vector3().addVectors(c, a).multiplyScalar(0.5);
+        [a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca].forEach((point) => nextPositions.push(point.x, point.y, point.z));
+      } else {
+        [a, b, c].forEach((point) => nextPositions.push(point.x, point.y, point.z));
+      }
+    }
+    if (!changed) break;
+    geometry.dispose();
+    geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(nextPositions, 3));
+    geometry.computeVertexNormals();
+  }
+  const smoothed = smoothGeometryLaplacian(geometry, 0.25, smoothPasses);
+  geometry.dispose();
+  return smoothed;
+}
+
+function planeCutGeometry(sourceGeometry, axis = 'z', positionValue = 0, keepDirection = 'positive') {
+  const geometry = sourceGeometry.index ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
+  const position = geometry.attributes.position;
+  const nextPositions = [];
+  const keepPositive = keepDirection === 'positive';
+  for (let i = 0; i < position.count; i += 3) {
+    const a = new THREE.Vector3().fromBufferAttribute(position, i);
+    const b = new THREE.Vector3().fromBufferAttribute(position, i + 1);
+    const c = new THREE.Vector3().fromBufferAttribute(position, i + 2);
+    const center = new THREE.Vector3().addVectors(a, b).add(c).multiplyScalar(1 / 3);
+    const keep = keepPositive ? center[axis] >= positionValue : center[axis] <= positionValue;
+    if (keep) [a, b, c].forEach((point) => nextPositions.push(point.x, point.y, point.z));
+  }
+  geometry.dispose();
+  const nextGeometry = new THREE.BufferGeometry();
+  nextGeometry.setAttribute('position', new THREE.Float32BufferAttribute(nextPositions, 3));
+  nextGeometry.computeVertexNormals();
+  nextGeometry.computeBoundingBox();
+  nextGeometry.computeBoundingSphere();
+  return nextGeometry;
+}
+
 function inspectMeshGeometry(mesh, root, printerSize) {
   const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
   const position = geometry.attributes.position;
@@ -323,20 +402,21 @@ function inspectMeshGeometry(mesh, root, printerSize) {
   };
 }
 
-function createShape(type, index = 0) {
+function createShape(type, index = 0, resolution = 'low') {
   const def = SHAPES[type];
+  const preset = RESOLUTION_PRESETS[resolution] || RESOLUTION_PRESETS.low;
   const color = `#${palette[index % palette.length].toString(16).padStart(6, '0')}`;
   let object;
 
   if (type === 'sphere') {
-    object = new THREE.Mesh(new THREE.SphereGeometry(def.size.x / 2, 48, 28), makeMaterial(new THREE.Color(color)));
+    object = new THREE.Mesh(new THREE.SphereGeometry(def.size.x / 2, preset.sphere[0], preset.sphere[1]), makeMaterial(new THREE.Color(color)));
   } else if (type === 'cylinder') {
-    object = makeCylinder(def.label, def.size.x / 2, def.size.z, new THREE.Color(color));
+    object = makeCylinder(def.label, def.size.x / 2, def.size.z, new THREE.Color(color), { x: 0, y: 0, z: 0 }, preset.cylinder);
   } else if (type === 'torus') {
-    const geometry = new THREE.TorusGeometry(12.5, 2.5, 24, 72);
+    const geometry = new THREE.TorusGeometry(12.5, 2.5, preset.torus[1], preset.torus[0]);
     object = new THREE.Mesh(geometry, makeMaterial(new THREE.Color(color)));
   } else if (type === 'cone') {
-    const geometry = new THREE.ConeGeometry(def.size.x / 2, def.size.z, 48);
+    const geometry = new THREE.ConeGeometry(def.size.x / 2, def.size.z, preset.cone);
     geometry.rotateX(Math.PI / 2);
     object = new THREE.Mesh(geometry, makeMaterial(new THREE.Color(color)));
   } else {
@@ -735,6 +815,7 @@ export default function App() {
   const faceHelperRef = useRef(null);
   const normalArrowRef = useRef(null);
   const brushPreviewRef = useRef(null);
+  const measureHelperRef = useRef(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
   const objectsRef = useRef([]);
@@ -747,6 +828,7 @@ export default function App() {
   const sculptActiveRef = useRef(false);
   const sculptSnapshotRef = useRef(null);
   const sculptChangedRef = useRef(false);
+  const measureActiveRef = useRef(false);
   const modeRef = useRef('translate');
   const snapRef = useRef(true);
   const multiSelectRef = useRef(false);
@@ -766,8 +848,12 @@ export default function App() {
   const [editMode, setEditMode] = useState('object');
   const [faceSelection, setFaceSelection] = useState(null);
   const [faceSettings, setFaceSettings] = useState({ distance: 5, radius: 20, softEdit: false, smoothStrength: 0.5 });
-  const [sculptSettings, setSculptSettings] = useState({ brushMode: 'raise', radius: 15, strength: 0.35, falloff: 'smooth' });
-  const [printPrepSettings, setPrintPrepSettings] = useState({ subdivideIterations: 1, smoothStrength: 0.35, smoothIterations: 2 });
+  const [shapeResolution, setShapeResolution] = useState('low');
+  const [sculptSettings, setSculptSettings] = useState({ brushMode: 'raise', radius: 15, strength: 0.35, falloff: 'smooth', symmetryX: false, symmetryY: false, symmetryZ: false });
+  const [printPrepSettings, setPrintPrepSettings] = useState({ subdivideIterations: 1, smoothStrength: 0.35, smoothIterations: 2, remeshEdgeLength: 8, remeshKeepVolume: true });
+  const [planeCutSettings, setPlaneCutSettings] = useState({ axis: 'z', position: 0, keep: 'positive' });
+  const [measureActive, setMeasureActive] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState([]);
   const [meshCheckResults, setMeshCheckResults] = useState(null);
   const [mode, setMode] = useState('translate');
   const [snapEnabled, setSnapEnabled] = useState(true);
@@ -865,6 +951,10 @@ export default function App() {
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      if (measureActiveRef.current) {
+        pickMeasurePoint();
+        return;
+      }
       if (editModeRef.current === 'sculpt') {
         if (event.button !== 0) return;
         beginSculptStroke();
@@ -986,6 +1076,14 @@ export default function App() {
         switchWorkflow('prep');
       } else if (!typing && event.key === '5') {
         switchWorkflow('export');
+      } else if (!typing && event.key === '[') {
+        setSculptSettings((settings) => ({ ...settings, radius: Math.max(1, Number(settings.radius) - 1) }));
+      } else if (!typing && event.key === ']') {
+        setSculptSettings((settings) => ({ ...settings, radius: Math.min(200, Number(settings.radius) + 1) }));
+      } else if (!typing && event.key === '-') {
+        setSculptSettings((settings) => ({ ...settings, strength: Math.max(0, roundNumber(Number(settings.strength) - 0.05, 2)) }));
+      } else if (!typing && event.key === '=') {
+        setSculptSettings((settings) => ({ ...settings, strength: Math.min(1, roundNumber(Number(settings.strength) + 0.05, 2)) }));
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -1020,6 +1118,10 @@ export default function App() {
     const hit = editModeRef.current === 'sculpt' ? getSculptHit() : null;
     if (hit) updateBrushPreview(hit);
   }, [sculptSettings]);
+
+  useEffect(() => {
+    measureActiveRef.current = measureActive;
+  }, [measureActive]);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -1220,6 +1322,56 @@ export default function App() {
     brushPreviewRef.current = null;
   }
 
+  function clearMeasureHelper() {
+    const scene = sceneRef.current;
+    if (!scene || !measureHelperRef.current) return;
+    scene.remove(measureHelperRef.current);
+    disposeObject(measureHelperRef.current);
+    measureHelperRef.current = null;
+  }
+
+  function updateMeasureHelper(points) {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    clearMeasureHelper();
+    if (!points.length) return;
+    const group = new THREE.Group();
+    group.userData.helper = true;
+    points.forEach((point) => {
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(1.8, 16, 8),
+        new THREE.MeshBasicMaterial({ color: 0xfacc15, depthTest: false }),
+      );
+      dot.position.copy(point);
+      dot.userData.helper = true;
+      group.add(dot);
+    });
+    if (points.length === 2) {
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({ color: 0xfacc15, depthTest: false }),
+      );
+      line.userData.helper = true;
+      group.add(line);
+    }
+    scene.add(group);
+    measureHelperRef.current = group;
+  }
+
+  function pickMeasurePoint() {
+    const meshes = objectsRef.current.flatMap((object) => getPrintableMeshes(object));
+    const hit = raycasterRef.current.intersectObjects(meshes, false)[0];
+    if (!hit?.point) {
+      showToast('請點選模型表面進行測量');
+      return;
+    }
+    setMeasurePoints((points) => {
+      const next = points.length >= 2 ? [hit.point.clone()] : [...points, hit.point.clone()];
+      updateMeasureHelper(next);
+      return next;
+    });
+  }
+
   function getSculptTarget() {
     const root = objectsRef.current.find((object) => object.uuid === selectedIdsRef.current[0]);
     if (!root) return { root: null, meshes: [] };
@@ -1337,10 +1489,34 @@ export default function App() {
     const strength = THREE.MathUtils.clamp(Number(settings.strength) || 0, 0, 1);
     if (strength <= 0) return false;
 
-    const position = geometry.attributes.position;
-    const normalAttribute = geometry.attributes.normal;
     const localPoint = mesh.worldToLocal(hit.point.clone());
     const brushNormal = triangle.normal.clone().normalize();
+    const strokePoints = [{ point: localPoint, normal: brushNormal }];
+    axes.forEach((axis) => {
+      if (!settings[`symmetry${axis.toUpperCase()}`]) return;
+      const mirrorPoint = localPoint.clone();
+      const mirrorNormal = brushNormal.clone();
+      mirrorPoint[axis] *= -1;
+      mirrorNormal[axis] *= -1;
+      strokePoints.push({ point: mirrorPoint, normal: mirrorNormal.normalize() });
+    });
+
+    let changed = false;
+    strokePoints.forEach(({ point, normal }) => {
+      changed = applySculptAtPoint(mesh, geometry, point, normal, settings) || changed;
+    });
+    if (!changed) return false;
+
+    updateEditedMesh(mesh);
+    sculptChangedRef.current = true;
+    return true;
+  }
+
+  function applySculptAtPoint(mesh, geometry, localPoint, brushNormal, settings) {
+    const radius = Math.max(0.5, Number(settings.radius) || 15);
+    const strength = THREE.MathUtils.clamp(Number(settings.strength) || 0, 0, 1);
+    const position = geometry.attributes.position;
+    const normalAttribute = geometry.attributes.normal;
     const deltaDistance = radius * 0.075 * strength;
     const affected = [];
 
@@ -1350,7 +1526,7 @@ export default function App() {
       if (distance > radius) continue;
       const weight = getFalloffWeight(distance, radius, settings.falloff);
       if (weight <= 0) continue;
-      affected.push({ index: i, vertex, distance, weight });
+      affected.push({ index: i, vertex, weight });
     }
     if (!affected.length) return false;
 
@@ -1366,24 +1542,16 @@ export default function App() {
     } else if (settings.brushMode === 'flatten') {
       affected.forEach(({ index, vertex, weight }) => {
         const offset = vertex.clone().sub(localPoint).dot(brushNormal);
-        const next = vertex.clone().addScaledVector(brushNormal, -offset * weight * strength);
-        setPositionAt(position, index, next);
+        setPositionAt(position, index, vertex.clone().addScaledVector(brushNormal, -offset * weight * strength));
       });
     } else {
       affected.forEach(({ index, vertex, weight }) => {
         let direction = brushNormal;
-        let sign = 1;
-        if (settings.brushMode === 'lower') sign = -1;
-        if (settings.brushMode === 'inflate' && normalAttribute) {
-          direction = new THREE.Vector3().fromBufferAttribute(normalAttribute, index).normalize();
-        }
-        const next = vertex.clone().addScaledVector(direction, deltaDistance * weight * sign);
-        setPositionAt(position, index, next);
+        let sign = settings.brushMode === 'lower' ? -1 : 1;
+        if (settings.brushMode === 'inflate' && normalAttribute) direction = new THREE.Vector3().fromBufferAttribute(normalAttribute, index).normalize();
+        setPositionAt(position, index, vertex.clone().addScaledVector(direction, deltaDistance * weight * sign));
       });
     }
-
-    updateEditedMesh(mesh);
-    sculptChangedRef.current = true;
     return true;
   }
 
@@ -1509,7 +1677,7 @@ export default function App() {
 
   function addShape(type) {
     pushHistory('add shape');
-    const object = createShape(type, objectCountRef.current);
+    const object = createShape(type, objectCountRef.current, shapeResolution);
     objectCountRef.current += 1;
     addObject(object);
     showToast(`已新增 ${SHAPES[type].label}`);
@@ -1657,6 +1825,27 @@ export default function App() {
     const orbit = orbitRef.current;
     if (!camera || !orbit) return;
     camera.position.set(220, -260, 180);
+    orbit.target.set(0, 0, 25);
+    orbit.update();
+  }
+
+  function setCameraView(view) {
+    const camera = cameraRef.current;
+    const orbit = orbitRef.current;
+    if (!camera || !orbit) return;
+    const distance = 340;
+    const positions = {
+      front: [0, -distance, 80],
+      back: [0, distance, 80],
+      left: [-distance, 0, 80],
+      right: [distance, 0, 80],
+      top: [0, 0, distance],
+      bottom: [0, 0, -distance],
+      iso: [220, -260, 180],
+    };
+    camera.position.set(...positions[view]);
+    camera.up.set(0, 0, 1);
+    if (view === 'top' || view === 'bottom') camera.up.set(0, 1, 0);
     orbit.target.set(0, 0, 25);
     orbit.update();
   }
@@ -1895,6 +2084,18 @@ export default function App() {
     finishPrintPrepChange(target.object, '已平滑模型');
   }
 
+  function remeshSelectedModel() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    pushHistory('remesh');
+    target.meshes.forEach((mesh) => {
+      const nextGeometry = remeshGeometrySimple(mesh.geometry, printPrepSettings.remeshEdgeLength, printPrepSettings.remeshKeepVolume ? 1 : 3);
+      mesh.geometry.dispose();
+      mesh.geometry = nextGeometry;
+    });
+    finishPrintPrepChange(target.object, '已套用 Remesh 簡化版');
+  }
+
   function recalculateSelectedNormals() {
     const target = getSelectedPrintableTarget();
     if (!target) return;
@@ -1948,6 +2149,18 @@ export default function App() {
     target.object.scale.set(1, 1, 1);
     finishPrintPrepChange(target.object, '已套用變形');
     attachTransformForSelection([target.object.uuid]);
+  }
+
+  function applyPlaneCut() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    pushHistory('plane cut');
+    target.meshes.forEach((mesh) => {
+      const nextGeometry = planeCutGeometry(mesh.geometry, planeCutSettings.axis, Number(planeCutSettings.position) || 0, planeCutSettings.keep);
+      mesh.geometry.dispose();
+      mesh.geometry = nextGeometry;
+    });
+    finishPrintPrepChange(target.object, '已裁切模型，可能需要修補開口');
   }
 
   function buildMeshCheckResults(targetObjects) {
@@ -2206,6 +2419,14 @@ export default function App() {
       <LeftPanel>
         <div className="brand"><span className="brand-mark">mm</span><span>Print Modeler</span></div>
         <div className="tool-section">
+          <span className="section-label">解析度</span>
+          <div className="segmented text-segmented">
+            {Object.entries(RESOLUTION_PRESETS).map(([key, preset]) => (
+              <button key={key} className={shapeResolution === key ? 'active' : ''} onClick={() => setShapeResolution(key)}>{preset.label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="tool-section">
           <span className="section-label">基本形狀</span>
           {Object.entries(SHAPES).map(([type, shape]) => {
             const Icon = shape.icon;
@@ -2224,6 +2445,11 @@ export default function App() {
           <span>{selected ? selected.name : '未選取物件'}</span>
         </div>
         <div ref={mountRef} className="three-viewport" />
+        <div className="view-buttons">
+          {['front', 'back', 'left', 'right', 'top', 'bottom', 'iso'].map((view) => (
+            <button key={view} onClick={() => setCameraView(view)}>{view === 'iso' ? 'ISO' : view[0].toUpperCase() + view.slice(1)}</button>
+          ))}
+        </div>
         {!objects.length && <div className="empty-scene-hint">從左側新增一個基本物件開始建模</div>}
       </section>
 
@@ -2262,14 +2488,18 @@ export default function App() {
             onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
             onSubdivide={subdivideSelectedModel}
             onSmooth={smoothSelectedModel}
-            onRecalculate={recalculateSelectedNormals}
-            onPlace={placeSelectedOnBed}
-            onCenter={centerSelectedOnBed}
-            onApplyTransform={applySelectedTransform}
-            onCheck={checkSelectedMesh}
-            results={meshCheckResults}
-            disabled={!primarySelected}
-          />
+          onRecalculate={recalculateSelectedNormals}
+          onRemesh={remeshSelectedModel}
+          onPlace={placeSelectedOnBed}
+          onCenter={centerSelectedOnBed}
+          onApplyTransform={applySelectedTransform}
+          onCheck={checkSelectedMesh}
+          planeCutSettings={planeCutSettings}
+          onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
+          onPlaneCut={applyPlaneCut}
+          results={meshCheckResults}
+          disabled={!primarySelected}
+        />
         ) : activeWorkflow === 'export' ? (
           <ExportPanel
             onExportStl={() => exportModel('stl')}
@@ -2322,6 +2552,13 @@ export default function App() {
               arrayDuplicate={arrayDuplicate}
               groupSelected={groupSelected}
               ungroupSelected={ungroupSelected}
+              measureActive={measureActive}
+              setMeasureActive={setMeasureActive}
+              measurePoints={measurePoints}
+              clearMeasure={() => {
+                setMeasurePoints([]);
+                clearMeasureHelper();
+              }}
             />
             <div className="notice">Hole 物件不會被列印，只用來切掉 Solid。</div>
             <TransformFields title="位置" unit="mm" data={selected.position} onChange={(axis, value) => updateSelected('position', axis, value)} />
@@ -2399,7 +2636,12 @@ function ObjectToolsPanel({
   arrayDuplicate,
   groupSelected,
   ungroupSelected,
+  measureActive,
+  setMeasureActive,
+  measurePoints,
+  clearMeasure,
 }) {
+  const distance = measurePoints.length === 2 ? measurePoints[0].distanceTo(measurePoints[1]) : null;
   return (
     <section className="printer-card object-tools-card">
       <div className="card-title">Object Mode 工具</div>
@@ -2418,10 +2660,20 @@ function ObjectToolsPanel({
         <button onClick={groupSelected} disabled={selectedCount < 2}>群組</button>
         <button onClick={ungroupSelected} disabled={!primarySelected?.isGroup}>取消群組</button>
         <button onClick={mergeSelected} disabled={selectedCount < 2}>合併</button>
+        <button onClick={() => setMeasureActive((value) => !value)} className={measureActive ? 'active' : ''}>Measure</button>
         <button onClick={() => setSelectedMode('solid')} disabled={!selectedCount}>設為實體</button>
         <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount}>設為洞</button>
         <button onClick={applyHole} disabled={selectedCount < 2}>套用打洞</button>
       </div>
+      <div className="notice">Measure：開啟後在模型表面點兩個點，即可量測直線距離。</div>
+      {measurePoints.length > 0 && (
+        <div className="dimension-readout">
+          <span>A：{measurePoints[0] ? `${roundNumber(measurePoints[0].x)} / ${roundNumber(measurePoints[0].y)} / ${roundNumber(measurePoints[0].z)} mm` : '-'}</span>
+          <span>B：{measurePoints[1] ? `${roundNumber(measurePoints[1].x)} / ${roundNumber(measurePoints[1].y)} / ${roundNumber(measurePoints[1].z)} mm` : '-'}</span>
+          <span>距離：{distance == null ? '-' : `${roundNumber(distance)} mm`}</span>
+          <button className="wide-action" onClick={clearMeasure}>清除測量</button>
+        </div>
+      )}
       <div className="mini-grid">
         <button onClick={() => mirrorSelected('x')} disabled={!selectedCount}>Mirror X</button>
         <button onClick={() => mirrorSelected('y')} disabled={!selectedCount}>Mirror Y</button>
@@ -2456,6 +2708,15 @@ function ExportPanel({ onExportStl, onExportObj, onSave, onLoad, hasObjects, che
       <section className="printer-card export-card">
         <div className="card-title">匯出</div>
         <div className="notice">匯出 STL 前會自動檢查模型；如果有警告或錯誤，會先詢問是否仍要匯出。</div>
+        <div className="export-steps">
+          <strong>建議流程</strong>
+          <ol>
+            <li>Apply Transform</li>
+            <li>Place on Bed</li>
+            <li>Check Mesh</li>
+            <li>Export STL</li>
+          </ol>
+        </div>
         {hasIssue && <div className="notice warning-note">目前檢查結果有警告或錯誤，建議先到 Print Prep 修復。</div>}
         <div className="prep-grid">
           <button onClick={onExportStl} disabled={!hasObjects}><Download size={14} /> 匯出 STL</button>
@@ -2468,7 +2729,7 @@ function ExportPanel({ onExportStl, onExportObj, onSave, onLoad, hasObjects, che
   );
 }
 
-function PrintPrepPanel({ settings, onSettingChange, onSubdivide, onSmooth, onRecalculate, onPlace, onCenter, onApplyTransform, onCheck, results, disabled }) {
+function PrintPrepPanel({ settings, onSettingChange, onSubdivide, onSmooth, onRecalculate, onRemesh, onPlace, onCenter, onApplyTransform, onCheck, planeCutSettings, onPlaneCutSettingChange, onPlaneCut, results, disabled }) {
   return (
     <section className="printer-card print-prep-card">
       <div className="card-title">列印準備 Print Prep</div>
@@ -2484,14 +2745,32 @@ function PrintPrepPanel({ settings, onSettingChange, onSubdivide, onSmooth, onRe
         <label className="field"><span>平滑強度</span><input type="number" min="0.1" max="1" step="0.1" value={settings.smoothStrength} onChange={(event) => onSettingChange('smoothStrength', event.target.value)} /></label>
       </div>
       <label className="field"><span>平滑次數</span><input type="number" min="1" max="10" step="1" value={settings.smoothIterations} onChange={(event) => onSettingChange('smoothIterations', event.target.value)} /></label>
+      <div className="notice">Remesh 簡化版：讓網格更平均，適合雕刻前整理。</div>
+      <div className="row-fields">
+        <label className="field"><span>目標邊長 mm</span><input type="number" min="0.5" step="0.5" value={settings.remeshEdgeLength} onChange={(event) => onSettingChange('remeshEdgeLength', event.target.value)} /></label>
+        <label className="mini-check toggle-line">
+          <input type="checkbox" checked={settings.remeshKeepVolume} onChange={(event) => onSettingChange('remeshKeepVolume', event.target.checked)} />
+          <span>保持體積</span>
+        </label>
+      </div>
       <div className="prep-grid">
         <button onClick={onSubdivide} disabled={disabled}>套用細分</button>
         <button onClick={onSmooth} disabled={disabled}>平滑模型</button>
+        <button onClick={onRemesh} disabled={disabled}>Remesh</button>
         <button onClick={onRecalculate} disabled={disabled}>重新計算法線</button>
         <button onClick={onPlace} disabled={disabled}>置於平台</button>
         <button onClick={onCenter} disabled={disabled}>居中到平台</button>
         <button onClick={onApplyTransform} disabled={disabled}>套用變形</button>
       </div>
+      <section className="nested-tool">
+        <div className="card-title">Plane Cut</div>
+        <div className="row-fields">
+          <label className="field"><span>裁切軸</span><select value={planeCutSettings.axis} onChange={(event) => onPlaneCutSettingChange('axis', event.target.value)}><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select></label>
+          <label className="field"><span>位置 mm</span><input type="number" step="1" value={planeCutSettings.position} onChange={(event) => onPlaneCutSettingChange('position', event.target.value)} /></label>
+        </div>
+        <label className="field"><span>保留方向</span><select value={planeCutSettings.keep} onChange={(event) => onPlaneCutSettingChange('keep', event.target.value)}><option value="positive">正向</option><option value="negative">負向</option></select></label>
+        <button className="wide-action" onClick={onPlaneCut} disabled={disabled}>套用裁切</button>
+      </section>
       <button className="wide-action" onClick={onCheck} disabled={disabled}>檢查模型</button>
       {results && (
         <div className="mesh-check-list">
@@ -2569,7 +2848,16 @@ function SculptPanel({ settings, onSettingChange, hasSelection }) {
             <option value="linear">Linear</option>
           </select>
         </label>
+        <div className="row-fields">
+          {axes.map((axis) => (
+            <label key={axis} className="mini-check toggle-line">
+              <input type="checkbox" checked={settings[`symmetry${axis.toUpperCase()}`]} onChange={(event) => onSettingChange(`symmetry${axis.toUpperCase()}`, event.target.checked)} />
+              <span>{axis.toUpperCase()} 對稱</span>
+            </label>
+          ))}
+        </div>
         <div className="notice">按住滑鼠左鍵在模型表面拖曳，即可雕刻。</div>
+        <div className="notice">熱鍵：[ / ] 調整半徑，- / = 調整強度。</div>
       </section>
     </div>
   );

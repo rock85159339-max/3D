@@ -280,6 +280,13 @@ select {
   padding: 0;
 }
 
+.text-segmented button {
+  aspect-ratio: auto;
+  min-height: 32px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .viewport-wrap {
   position: relative;
   min-width: 0;
@@ -330,6 +337,34 @@ select {
   font-size: 14px;
   font-weight: 900;
   box-shadow: 0 14px 35px rgba(0, 0, 0, 0.25);
+}
+
+.view-buttons {
+  position: absolute;
+  right: 12px;
+  top: 48px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 235px;
+}
+
+.view-buttons button {
+  min-height: 30px;
+  border: 1px solid #334155;
+  border-radius: 7px;
+  color: #dbeafe;
+  background: rgba(15, 23, 34, 0.86);
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.view-buttons button:hover {
+  border-color: #38bdf8;
+  background: #163049;
 }
 
 .panel-header {
@@ -531,6 +566,36 @@ input[type="color"] {
 
 .print-prep-card {
   gap: 12px;
+}
+
+.nested-tool {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #273243;
+  border-radius: 7px;
+  background: #111923;
+}
+
+.export-steps {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #273243;
+  border-radius: 7px;
+  background: #0f1722;
+}
+
+.export-steps strong {
+  color: #e0f2fe;
+}
+
+.export-steps ol {
+  margin: 0;
+  padding-left: 20px;
+  color: #c8d6e6;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .prep-grid {
