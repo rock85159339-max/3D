@@ -149,6 +149,7 @@ function markPrintObject(object, name, type, options = {}) {
   object.userData.bevelRadius = options.bevelRadius || 0;
   object.userData.bevelSegments = options.bevelSegments || 2;
   object.userData.textSettings = options.textSettings || null;
+  object.userData.templateSettings = options.templateSettings || null;
   applyModeAndColor(object, object.userData.mode, object.userData.color);
   return object;
 }
@@ -525,6 +526,7 @@ function objectToProjectData(object) {
     bevelRadius: object.userData.bevelRadius || 0,
     bevelSegments: object.userData.bevelSegments || 2,
     textSettings: object.userData.textSettings || null,
+    templateSettings: object.userData.templateSettings || null,
     children: [],
     geometry: null,
   };
