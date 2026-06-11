@@ -1007,6 +1007,9 @@ export default function App() {
     }, 350);
 
     const onPointerDown = (event) => {
+      if (event.button === 0 && orbit) {
+        orbit.mouseButtons.LEFT = event.shiftKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+      }
       if (prefsRef.current?.operationStyle === 'blender' && event.button === 1 && orbit) {
         orbit.mouseButtons.MIDDLE = event.shiftKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
       }

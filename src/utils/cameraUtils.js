@@ -62,7 +62,7 @@ export function applyOrbitControlStyle(orbit, THREERef, style, sensitivity = 1) 
     };
   } else {
     orbit.mouseButtons = {
-      LEFT: null,
+      LEFT: THREERef.MOUSE.ROTATE,
       MIDDLE: THREERef.MOUSE.ROTATE,
       RIGHT: THREERef.MOUSE.PAN,
     };

@@ -3,8 +3,8 @@ import React from 'react';
 export default function StatusBar({ workflow, editMode, mode, selectedCount, lockedAxis, operationStyle, brushMode, boxSelectActive, appInfo, version }) {
   const tool = editMode === 'sculpt' ? `Sculpt ${brushMode}` : boxSelectActive ? 'Box Select' : mode;
   const hint = operationStyle === 'maya'
-    ? 'Maya: Alt+Left rotate, Alt+Middle pan, Alt+Right zoom, F focus, A frame all'
-    : 'Blender: Middle rotate, Shift+Middle pan, G move, R rotate, S scale, F focus';
+    ? 'Maya: Left drag rotate, Shift+Left pan, wheel zoom, F focus, A frame all'
+    : 'Blender: Left/Middle drag rotate, Shift+Left/Middle pan, G move, R rotate, S scale';
   return (
     <footer className="status-bar">
       <span>{appInfo.name} {version}</span>
