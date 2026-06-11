@@ -32,9 +32,9 @@ export default function ContextMenu({
         </>
       ) : (
         <>
-          <button onClick={() => onAddShape('cube')}>Add Cube</button>
-          <button onClick={() => onAddShape('sphere')}>Add Sphere</button>
-          <button onClick={() => onAddShape('cylinder')}>Add Cylinder</button>
+          <button onClick={() => onAddShape('cube')}>新增方塊</button>
+          <button onClick={() => onAddShape('sphere')}>新增球體</button>
+          <button onClick={() => onAddShape('cylinder')}>新增圓柱</button>
           <button disabled={!hasSelection} onClick={onCopy}>Copy Selection</button>
           <button disabled={!hasClipboard} onClick={onPaste}>Paste</button>
         </>

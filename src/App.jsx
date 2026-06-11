@@ -57,30 +57,30 @@ const PRINTERS = {
 };
 
 const SHAPES = {
-  cube: { label: 'Cube', icon: Box, size: { x: 20, y: 20, z: 20 } },
-  sphere: { label: 'Sphere', icon: Circle, size: { x: 20, y: 20, z: 20 } },
-  cylinder: { label: 'Cylinder', icon: Cylinder, size: { x: 20, y: 20, z: 30 } },
-  torus: { label: 'Torus', icon: Circle, size: { x: 30, y: 30, z: 5 } },
-  cone: { label: 'Cone', icon: Cylinder, size: { x: 25, y: 25, z: 35 } },
+  cube: { label: '方塊', icon: Box, size: { x: 20, y: 20, z: 20 } },
+  sphere: { label: '球體', icon: Circle, size: { x: 20, y: 20, z: 20 } },
+  cylinder: { label: '圓柱', icon: Cylinder, size: { x: 20, y: 20, z: 30 } },
+  torus: { label: '圓環', icon: Circle, size: { x: 30, y: 30, z: 5 } },
+  cone: { label: '圓錐', icon: Cylinder, size: { x: 25, y: 25, z: 35 } },
 };
 
 const RESOLUTION_PRESETS = {
   low: {
-    label: 'Low',
+    label: '低',
     sphere: [32, 16],
     cylinder: 32,
     cone: 32,
     torus: [48, 12],
   },
   medium: {
-    label: 'Medium',
+    label: '中',
     sphere: [64, 32],
     cylinder: 64,
     cone: 64,
     torus: [72, 18],
   },
   high: {
-    label: 'High',
+    label: '高',
     sphere: [96, 48],
     cylinder: 96,
     cone: 96,
