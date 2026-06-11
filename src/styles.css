@@ -430,6 +430,75 @@ input[type="color"] {
   gap: 12px;
 }
 
+.print-prep-card {
+  gap: 12px;
+}
+
+.prep-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.prep-grid button {
+  min-height: 38px;
+  padding: 8px;
+  border: 1px solid #273243;
+  border-radius: 7px;
+  color: #e0f2fe;
+  background: #111a28;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.prep-grid button:hover:not(:disabled) {
+  border-color: #38bdf8;
+  background: #163049;
+}
+
+.prep-grid button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.mesh-check-list {
+  display: grid;
+  gap: 7px;
+}
+
+.mesh-check-item {
+  display: grid;
+  grid-template-columns: 22px 46px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #273243;
+  border-radius: 7px;
+  background: #0f1722;
+  font-size: 12px;
+}
+
+.mesh-check-item strong {
+  color: #cbd5e1;
+}
+
+.mesh-check-item p {
+  margin: 0;
+  color: #9db0c7;
+}
+
+.mesh-check-item.ok strong {
+  color: #86efac;
+}
+
+.mesh-check-item.warning strong {
+  color: #fde68a;
+}
+
+.mesh-check-item.error strong {
+  color: #fda4af;
+}
+
 .warning-note {
   border-color: #f97316;
   color: #fed7aa;

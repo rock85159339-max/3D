@@ -196,6 +196,133 @@ function getFalloffWeight(distance, radius, falloff) {
   return t * t * (3 - 2 * t);
 }
 
+function vertexKey(vector, precision = 10000) {
+  return `${Math.round(vector.x * precision)},${Math.round(vector.y * precision)},${Math.round(vector.z * precision)}`;
+}
+
+function edgeKey(a, b) {
+  return [vertexKey(a), vertexKey(b)].sort().join('|');
+}
+
+function subdivideTriangleGeometry(sourceGeometry, iterations = 1) {
+  let geometry = sourceGeometry.index ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
+  for (let step = 0; step < iterations; step += 1) {
+    const position = geometry.attributes.position;
+    const nextPositions = [];
+    for (let i = 0; i < position.count; i += 3) {
+      const a = new THREE.Vector3().fromBufferAttribute(position, i);
+      const b = new THREE.Vector3().fromBufferAttribute(position, i + 1);
+      const c = new THREE.Vector3().fromBufferAttribute(position, i + 2);
+      const ab = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+      const bc = new THREE.Vector3().addVectors(b, c).multiplyScalar(0.5);
+      const ca = new THREE.Vector3().addVectors(c, a).multiplyScalar(0.5);
+      [a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca].forEach((point) => nextPositions.push(point.x, point.y, point.z));
+    }
+    geometry.dispose();
+    geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(nextPositions, 3));
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+  }
+  return geometry;
+}
+
+function smoothGeometryLaplacian(sourceGeometry, strength = 0.35, iterations = 2) {
+  const geometry = sourceGeometry.index ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
+  const position = geometry.attributes.position;
+  const amount = THREE.MathUtils.clamp(Number(strength) || 0.35, 0.1, 1) * 0.45;
+  const passes = Math.max(1, Math.min(10, Math.floor(Number(iterations) || 1)));
+
+  for (let pass = 0; pass < passes; pass += 1) {
+    const groups = new Map();
+    const adjacency = new Map();
+    const current = [];
+
+    for (let i = 0; i < position.count; i += 1) {
+      const point = new THREE.Vector3().fromBufferAttribute(position, i);
+      const key = vertexKey(point);
+      current[i] = point;
+      if (!groups.has(key)) groups.set(key, { indices: [], point: point.clone() });
+      groups.get(key).indices.push(i);
+      if (!adjacency.has(key)) adjacency.set(key, new Set());
+    }
+
+    for (let i = 0; i < position.count; i += 3) {
+      const keys = [vertexKey(current[i]), vertexKey(current[i + 1]), vertexKey(current[i + 2])];
+      [[0, 1], [1, 2], [2, 0]].forEach(([from, to]) => {
+        adjacency.get(keys[from])?.add(keys[to]);
+        adjacency.get(keys[to])?.add(keys[from]);
+      });
+    }
+
+    const nextByKey = new Map();
+    groups.forEach((group, key) => {
+      const neighbors = [...(adjacency.get(key) || [])].map((neighborKey) => groups.get(neighborKey)?.point).filter(Boolean);
+      if (!neighbors.length) {
+        nextByKey.set(key, group.point.clone());
+        return;
+      }
+      const average = neighbors.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(1 / neighbors.length);
+      nextByKey.set(key, group.point.clone().lerp(average, amount));
+    });
+
+    groups.forEach((group, key) => {
+      const next = nextByKey.get(key);
+      group.indices.forEach((index) => position.setXYZ(index, next.x, next.y, next.z));
+    });
+    position.needsUpdate = true;
+  }
+
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function inspectMeshGeometry(mesh, root, printerSize) {
+  const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+  const position = geometry.attributes.position;
+  const rootBounds = getObjectBounds(root);
+  const halfX = printerSize.x / 2;
+  const halfY = printerSize.y / 2;
+  let invalidVertexCount = 0;
+  let degenerateTriangleCount = 0;
+  const edgeUse = new Map();
+
+  for (let i = 0; i < position.count; i += 1) {
+    const x = position.getX(i);
+    const y = position.getY(i);
+    const z = position.getZ(i);
+    if (![x, y, z].every(Number.isFinite)) invalidVertexCount += 1;
+  }
+
+  for (let i = 0; i < position.count; i += 3) {
+    const a = new THREE.Vector3().fromBufferAttribute(position, i);
+    const b = new THREE.Vector3().fromBufferAttribute(position, i + 1);
+    const c = new THREE.Vector3().fromBufferAttribute(position, i + 2);
+    const area = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a)).length() * 0.5;
+    if (area < 0.000001) degenerateTriangleCount += 1;
+    [edgeKey(a, b), edgeKey(b, c), edgeKey(c, a)].forEach((key) => edgeUse.set(key, (edgeUse.get(key) || 0) + 1));
+  }
+
+  if (geometry !== mesh.geometry) geometry.dispose();
+  const openEdgeCount = [...edgeUse.values()].filter((count) => count === 1).length;
+  const size = rootBounds.size;
+  const outside = rootBounds.box.min.x < -halfX || rootBounds.box.max.x > halfX || rootBounds.box.min.y < -halfY || rootBounds.box.max.y > halfY || rootBounds.box.max.z > printerSize.z;
+
+  return {
+    triangleCount: Math.floor(position.count / 3),
+    vertexCount: position.count,
+    belowPlatform: rootBounds.box.min.z < -0.01,
+    outside,
+    tooThin: size.x < 1 || size.y < 1 || size.z < 1,
+    invalidVertexCount,
+    openEdgeCount,
+    degenerateTriangleCount,
+  };
+}
+
 function createShape(type, index = 0) {
   const def = SHAPES[type];
   const color = `#${palette[index % palette.length].toString(16).padStart(6, '0')}`;
@@ -634,6 +761,8 @@ export default function App() {
   const [faceSelection, setFaceSelection] = useState(null);
   const [faceSettings, setFaceSettings] = useState({ distance: 5, radius: 20, softEdit: false, smoothStrength: 0.5 });
   const [sculptSettings, setSculptSettings] = useState({ brushMode: 'raise', radius: 15, strength: 0.35, falloff: 'smooth' });
+  const [printPrepSettings, setPrintPrepSettings] = useState({ subdivideIterations: 1, smoothStrength: 0.35, smoothIterations: 2 });
+  const [meshCheckResults, setMeshCheckResults] = useState(null);
   const [mode, setMode] = useState('translate');
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [multiSelect, setMultiSelect] = useState(false);
@@ -1624,6 +1753,157 @@ export default function App() {
     refreshObjects();
   }
 
+  function getSelectedPrintableTarget() {
+    const object = objectsRef.current.find((item) => item.uuid === selectedIdsRef.current[0]);
+    if (!object) {
+      showToast('沒有選取物件');
+      return null;
+    }
+    const meshes = getPrintableMeshes(object);
+    if (!meshes.length) {
+      showToast('選取物件沒有可處理的 mesh');
+      return null;
+    }
+    return { object, meshes };
+  }
+
+  function finishPrintPrepChange(object, message) {
+    object.traverse((child) => {
+      if (!child.isMesh || !child.geometry) return;
+      child.geometry.computeVertexNormals();
+      child.geometry.computeBoundingBox();
+      child.geometry.computeBoundingSphere();
+      child.geometry.attributes.position.needsUpdate = true;
+      if (child.geometry.attributes.normal) child.geometry.attributes.normal.needsUpdate = true;
+    });
+    setSelected(readTransform(object));
+    updateSelectionHelpers([object]);
+    refreshObjects();
+    setMeshCheckResults(null);
+    showToast(message);
+  }
+
+  function subdivideSelectedModel() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    const iterations = Math.max(1, Math.min(2, Math.floor(Number(printPrepSettings.subdivideIterations) || 1)));
+    const currentTriangles = target.meshes.reduce((sum, mesh) => sum + Math.floor((mesh.geometry.index ? mesh.geometry.index.count : mesh.geometry.attributes.position.count) / 3), 0);
+    if (currentTriangles * 4 ** iterations > 120000) showToast('面數過高可能影響效能');
+    pushHistory('subdivide');
+    target.meshes.forEach((mesh) => {
+      const nextGeometry = subdivideTriangleGeometry(mesh.geometry, iterations);
+      mesh.geometry.dispose();
+      mesh.geometry = nextGeometry;
+    });
+    finishPrintPrepChange(target.object, '已套用細分');
+  }
+
+  function smoothSelectedModel() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    pushHistory('smooth model');
+    target.meshes.forEach((mesh) => {
+      const nextGeometry = smoothGeometryLaplacian(mesh.geometry, printPrepSettings.smoothStrength, printPrepSettings.smoothIterations);
+      mesh.geometry.dispose();
+      mesh.geometry = nextGeometry;
+    });
+    finishPrintPrepChange(target.object, '已平滑模型');
+  }
+
+  function recalculateSelectedNormals() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    pushHistory('recalculate normals');
+    target.meshes.forEach((mesh) => {
+      makeEditableGeometry(mesh);
+      mesh.geometry.computeVertexNormals();
+      mesh.geometry.attributes.position.needsUpdate = true;
+      if (mesh.geometry.attributes.normal) mesh.geometry.attributes.normal.needsUpdate = true;
+    });
+    finishPrintPrepChange(target.object, '已重新計算法線');
+  }
+
+  function placeSelectedOnBed() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    pushHistory('place on bed');
+    const { box } = getObjectBounds(target.object);
+    target.object.position.z -= box.min.z;
+    finishPrintPrepChange(target.object, '已置於平台');
+  }
+
+  function centerSelectedOnBed() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    pushHistory('center on bed');
+    const { box, center } = getObjectBounds(target.object);
+    target.object.position.x -= center.x;
+    target.object.position.y -= center.y;
+    target.object.position.z -= box.min.z;
+    finishPrintPrepChange(target.object, '已居中到平台');
+  }
+
+  function applySelectedTransform() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    pushHistory('apply transform');
+    detachSelectionGroup();
+    target.object.updateWorldMatrix(true, true);
+    target.object.traverse((child) => {
+      if (!child.isMesh || !child.geometry || child.userData.helper) return;
+      child.updateWorldMatrix(true, false);
+      child.geometry.applyMatrix4(child.matrixWorld);
+      child.position.set(0, 0, 0);
+      child.rotation.set(0, 0, 0);
+      child.scale.set(1, 1, 1);
+      child.updateMatrixWorld(true);
+    });
+    target.object.position.set(0, 0, 0);
+    target.object.rotation.set(0, 0, 0);
+    target.object.scale.set(1, 1, 1);
+    finishPrintPrepChange(target.object, '已套用變形');
+    attachTransformForSelection([target.object.uuid]);
+  }
+
+  function checkSelectedMesh() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    const aggregate = target.meshes.reduce((result, mesh) => {
+      const report = inspectMeshGeometry(mesh, target.object, printerSize);
+      return {
+        triangleCount: result.triangleCount + report.triangleCount,
+        vertexCount: result.vertexCount + report.vertexCount,
+        belowPlatform: result.belowPlatform || report.belowPlatform,
+        outside: result.outside || report.outside,
+        tooThin: result.tooThin || report.tooThin,
+        invalidVertexCount: result.invalidVertexCount + report.invalidVertexCount,
+        openEdgeCount: result.openEdgeCount + report.openEdgeCount,
+        degenerateTriangleCount: result.degenerateTriangleCount + report.degenerateTriangleCount,
+      };
+    }, {
+      triangleCount: 0,
+      vertexCount: 0,
+      belowPlatform: false,
+      outside: false,
+      tooThin: false,
+      invalidVertexCount: 0,
+      openEdgeCount: 0,
+      degenerateTriangleCount: 0,
+    });
+
+    setMeshCheckResults([
+      { label: `Triangle 數量：${aggregate.triangleCount}`, status: aggregate.triangleCount > 120000 ? 'warning' : 'ok' },
+      { label: `Vertex 數量：${aggregate.vertexCount}`, status: aggregate.vertexCount > 360000 ? 'warning' : 'ok' },
+      { label: aggregate.belowPlatform ? '模型低於平台' : '未低於平台', status: aggregate.belowPlatform ? 'error' : 'ok' },
+      { label: aggregate.outside ? '模型超出列印平台' : '未超出列印平台', status: aggregate.outside ? 'warning' : 'ok' },
+      { label: aggregate.tooThin ? '尺寸小於 1mm' : '尺寸厚度正常', status: aggregate.tooThin ? 'warning' : 'ok' },
+      { label: aggregate.invalidVertexCount ? `有 ${aggregate.invalidVertexCount} 個 NaN / Infinity 頂點` : '沒有 NaN / Infinity 頂點', status: aggregate.invalidVertexCount ? 'error' : 'ok' },
+      { label: aggregate.openEdgeCount ? `可能有開口：${aggregate.openEdgeCount} 條邊只被使用一次` : '未偵測到開口邊', status: aggregate.openEdgeCount ? 'warning' : 'ok' },
+      { label: aggregate.degenerateTriangleCount ? `有 ${aggregate.degenerateTriangleCount} 個退化 triangle` : '沒有退化 triangle', status: aggregate.degenerateTriangleCount ? 'warning' : 'ok' },
+    ]);
+    showToast('已檢查模型');
+  }
+
   function moveSelectedFace(direction = 1) {
     const face = currentFaceRef.current;
     if (!face?.mesh) {
@@ -1921,6 +2201,20 @@ export default function App() {
           </div>
         </section>
 
+        <PrintPrepPanel
+          settings={printPrepSettings}
+          onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
+          onSubdivide={subdivideSelectedModel}
+          onSmooth={smoothSelectedModel}
+          onRecalculate={recalculateSelectedNormals}
+          onPlace={placeSelectedOnBed}
+          onCenter={centerSelectedOnBed}
+          onApplyTransform={applySelectedTransform}
+          onCheck={checkSelectedMesh}
+          results={meshCheckResults}
+          disabled={!primarySelected}
+        />
+
         {editMode === 'face' ? (
           <FaceEditPanel
             faceSelection={faceSelection}
@@ -1972,6 +2266,46 @@ function TransformFields({ title, data, onChange, step = '0.1', unit, labels = {
         </label>
       ))}
     </fieldset>
+  );
+}
+
+function PrintPrepPanel({ settings, onSettingChange, onSubdivide, onSmooth, onRecalculate, onPlace, onCenter, onApplyTransform, onCheck, results, disabled }) {
+  return (
+    <section className="printer-card print-prep-card">
+      <div className="card-title">列印準備 Print Prep</div>
+      {disabled && <div className="notice warning-note">請先選取要處理的物件。</div>}
+      <div className="row-fields">
+        <label className="field">
+          <span>細分次數</span>
+          <select value={settings.subdivideIterations} onChange={(event) => onSettingChange('subdivideIterations', Number(event.target.value))}>
+            <option value={1}>1</option>
+            <option value={2}>2</option>
+          </select>
+        </label>
+        <label className="field"><span>平滑強度</span><input type="number" min="0.1" max="1" step="0.1" value={settings.smoothStrength} onChange={(event) => onSettingChange('smoothStrength', event.target.value)} /></label>
+      </div>
+      <label className="field"><span>平滑次數</span><input type="number" min="1" max="10" step="1" value={settings.smoothIterations} onChange={(event) => onSettingChange('smoothIterations', event.target.value)} /></label>
+      <div className="prep-grid">
+        <button onClick={onSubdivide} disabled={disabled}>套用細分</button>
+        <button onClick={onSmooth} disabled={disabled}>平滑模型</button>
+        <button onClick={onRecalculate} disabled={disabled}>重新計算法線</button>
+        <button onClick={onPlace} disabled={disabled}>置於平台</button>
+        <button onClick={onCenter} disabled={disabled}>居中到平台</button>
+        <button onClick={onApplyTransform} disabled={disabled}>套用變形</button>
+      </div>
+      <button className="wide-action" onClick={onCheck} disabled={disabled}>檢查模型</button>
+      {results && (
+        <div className="mesh-check-list">
+          {results.map((item) => (
+            <div key={item.label} className={`mesh-check-item ${item.status}`}>
+              <span>{item.status === 'ok' ? '✅' : item.status === 'warning' ? '⚠️' : '❌'}</span>
+              <strong>{item.status === 'ok' ? '正常' : item.status === 'warning' ? '警告' : '錯誤'}</strong>
+              <p>{item.label}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
