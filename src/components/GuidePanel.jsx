@@ -5,7 +5,7 @@ export default function GuidePanel({ onClose, onNeverShow }) {
     <section className="guide-panel">
       <div>
         <strong>操作指南</strong>
-        <p>基本操作：中鍵旋轉視角，Shift + 中鍵平移，滾輪縮放，G 移動，R 旋轉，S 縮放，F 聚焦，Tab 切換 Object / Face Mode。</p>
+        <p>基本操作：左鍵拖曳旋轉視角，Shift + 左鍵平移，Alt + 左鍵可在編輯/雕刻時強制旋轉視角，滾輪縮放，G 移動，R 旋轉，S 縮放。</p>
         <ol>
           <li>新增基本物件。</li>
           <li>用 G / R / S 調整位置、旋轉與尺寸。</li>

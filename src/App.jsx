@@ -1046,12 +1046,19 @@ export default function App() {
       }
       if (editModeRef.current === 'sculpt') {
         if (event.button !== 0) return;
+        if (event.altKey || event.shiftKey) return;
+        const hit = getSculptHit();
+        if (!hit?.object) return;
         event.preventDefault();
         event.stopPropagation();
         beginSculptStroke();
         return;
       }
       if (editModeRef.current === 'face') {
+        if (event.altKey || event.shiftKey) return;
+        const root = objectsRef.current.find((object) => object.uuid === selectedIdsRef.current[0]);
+        const faceHit = root ? raycasterRef.current.intersectObjects(getPrintableMeshes(root), false)[0] : null;
+        if (!faceHit?.object) return;
         event.preventDefault();
         event.stopPropagation();
         pickFaceFromPointer();
