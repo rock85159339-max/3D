@@ -731,8 +731,19 @@ function snapObjectDimensions(object) {
 
 function meshToWorldGeometry(mesh) {
   mesh.updateWorldMatrix(true, false);
-  const geometry = mesh.geometry.clone();
+  let geometry = mesh.geometry.clone();
   geometry.applyMatrix4(mesh.matrixWorld);
+  if (geometry.index) geometry = geometry.toNonIndexed();
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function meshToMergeGeometry(mesh) {
+  let geometry = meshToWorldGeometry(mesh);
+  Object.keys(geometry.attributes).forEach((name) => {
+    if (!['position', 'normal'].includes(name)) geometry.deleteAttribute(name);
+  });
+  geometry.computeVertexNormals();
   return geometry;
 }
 
@@ -749,6 +760,18 @@ function csgCombine(meshes, operation) {
     result = evaluator.evaluate(result, meshToBrush(meshes[i]), operation);
   }
   return result;
+}
+
+function getShapeDisplayName(type) {
+  const labels = {
+    cube: '方塊',
+    sphere: '球體',
+    cylinder: '圓柱',
+    torus: '圓環',
+    cone: '圓錐',
+    text: '文字',
+  };
+  return labels[type] || '物件';
 }
 
 function createMeshFromGeometry(name, geometry, color = '#38bdf8') {
@@ -1300,6 +1323,28 @@ export default function App() {
     setToast(message);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToast(''), 2500);
+  }
+
+  function getSelectedPrintObjects() {
+    const selectedSet = new Set(selectedIdsRef.current);
+    return objectsRef.current.filter((object) => selectedSet.has(object.uuid) && object.userData.printObject && object.visible !== false);
+  }
+
+  function getSelectedSolidsAndHoles() {
+    const selectedItems = getSelectedPrintObjects();
+    return {
+      selectedItems,
+      solids: selectedItems.filter((object) => object.userData.mode !== 'hole'),
+      holes: selectedItems.filter((object) => object.userData.mode === 'hole'),
+    };
+  }
+
+  function getNextObjectName(type, reservedNames = []) {
+    const baseName = getShapeDisplayName(type);
+    let next = 1;
+    const usedNames = new Set([...objectsRef.current.map((object) => object.name), ...reservedNames]);
+    while (usedNames.has(`${baseName} ${next}`)) next += 1;
+    return `${baseName} ${next}`;
   }
 
   function runSafe(label, action) {
@@ -1880,17 +1925,19 @@ export default function App() {
   function addShape(type) {
     pushHistory('add shape');
     const object = createShape(type, objectCountRef.current, shapeResolution);
+    object.name = getNextObjectName(type);
     objectCountRef.current += 1;
     addObject(object);
-    showToast(`已新增 ${SHAPES[type].label}`);
+    showToast(`已新增 ${getShapeDisplayName(type)}`);
   }
 
   function addText() {
     pushHistory('add text');
     const object = createTextObject(objectCountRef.current);
+    object.name = getNextObjectName('text');
     objectCountRef.current += 1;
     addObject(object);
-    showToast('已新增 3D 文字');
+    showToast('已新增 文字');
   }
 
   function deleteSelected() {
@@ -1920,7 +1967,13 @@ export default function App() {
     }
     pushHistory('duplicate');
     detachSelectionGroup();
-    const clones = selectedIdsRef.current.map((id) => objectsRef.current.find((item) => item.uuid === id)).filter(Boolean).map(clonePrintable);
+    const reservedNames = [];
+    const clones = selectedIdsRef.current.map((id) => objectsRef.current.find((item) => item.uuid === id)).filter(Boolean).map((source) => {
+      const clone = clonePrintable(source);
+      clone.name = getNextObjectName(source.userData.shapeType || 'custom', reservedNames);
+      reservedNames.push(clone.name);
+      return clone;
+    });
     clones.forEach((clone) => {
       objectsRef.current.push(clone);
       sceneRef.current.add(clone);
@@ -2214,59 +2267,83 @@ export default function App() {
   function mergeSelected() {
     return runSafe('Merge', () => {
       detachSelectionGroup();
-      const solids = selectedIdsRef.current.map((id) => objectsRef.current.find((item) => item.uuid === id)).filter((object) => object?.userData.mode !== 'hole');
-      const meshes = solids.flatMap(getPrintableMeshes);
+      const { solids } = getSelectedSolidsAndHoles();
+      if (solids.length < 2) {
+        showToast('請至少選取 2 個實體物件才能合併');
+        return;
+      }
+      const meshes = solids.flatMap((object) => {
+        object.updateMatrixWorld(true);
+        return getPrintableMeshes(object);
+      });
       if (meshes.length < 2) {
-        showToast('請至少選取 2 個物件才能合併');
+        showToast('請至少選取 2 個含有 mesh 的實體物件才能合併');
         return;
       }
       pushHistory('merge');
-      let geometry;
-      try {
-        geometry = csgCombine(meshes, ADDITION)?.geometry;
-      } catch {
-        geometry = mergeGeometries(meshes.map(meshToWorldGeometry), false);
-      }
+      const geometries = meshes.map(meshToMergeGeometry).filter(Boolean);
+      const geometry = mergeGeometries(geometries, false);
       if (!geometry) return;
-      const merged = createMeshFromGeometry('合併物件', geometry, '#38bdf8');
+      const merged = createMeshFromGeometry('合併物件', geometry, solids[0].userData.color || getPrimaryColor(solids[0]));
+      merged.position.set(0, 0, 0);
+      merged.rotation.set(0, 0, 0);
+      merged.scale.set(1, 1, 1);
       solids.forEach((object) => sceneRef.current.remove(object));
       objectsRef.current = objectsRef.current.filter((object) => !solids.includes(object));
       objectsRef.current.push(merged);
       sceneRef.current.add(merged);
       refreshObjects();
       attachTransformForSelection([merged.uuid]);
-      showToast('已合併物件');
+      showToast('已合併 ' + solids.length + ' 個物件');
     });
   }
 
   function applyHole() {
     detachSelectionGroup();
-    const selectedItems = selectedIdsRef.current.map((id) => objectsRef.current.find((item) => item.uuid === id)).filter(Boolean);
-    const solids = selectedItems.filter((object) => object.userData.mode !== 'hole').flatMap(getPrintableMeshes);
-    const holes = selectedItems.filter((object) => object.userData.mode === 'hole').flatMap(getPrintableMeshes);
-    if (!solids.length || !holes.length) {
-      setBooleanMessage('請同時選取 Solid 與 Hole。');
-      showToast('請同時選取 Solid 與 Hole');
+    const { solids, holes } = getSelectedSolidsAndHoles();
+    if (!solids.length) {
+      setBooleanMessage('請選取一個實體物件作為打洞目標。');
+      showToast('請選取一個實體物件作為打洞目標');
+      return;
+    }
+    if (!holes.length) {
+      setBooleanMessage('請選取至少一個 Hole 物件作為切割工具。');
+      showToast('請選取至少一個 Hole 物件作為切割工具');
       return;
     }
 
     try {
       pushHistory('boolean');
-      const solidBrush = csgCombine(solids, ADDITION);
-      const holeBrush = csgCombine(holes, ADDITION);
-      const result = evaluator.evaluate(solidBrush, holeBrush, SUBTRACTION);
-      const mesh = createMeshFromGeometry('打洞結果', result.geometry, '#38bdf8');
-      selectedItems.forEach((object) => sceneRef.current.remove(object));
-      objectsRef.current = objectsRef.current.filter((object) => !selectedItems.includes(object));
+      const target = solids[0];
+      target.updateMatrixWorld(true);
+      const cutterMeshes = holes.flatMap((object) => {
+        object.updateMatrixWorld(true);
+        return getPrintableMeshes(object);
+      });
+      const targetMeshes = getPrintableMeshes(target);
+      const targetBrush = csgCombine(targetMeshes, ADDITION);
+      if (!targetBrush || !cutterMeshes.length) throw new Error('缺少可用的 Solid 或 Hole mesh');
+      let resultBrush = targetBrush;
+      cutterMeshes.forEach((mesh) => {
+        resultBrush = evaluator.evaluate(resultBrush, meshToBrush(mesh), SUBTRACTION);
+      });
+      const mesh = createMeshFromGeometry('打洞結果', resultBrush.geometry.clone(), target.userData.color || getPrimaryColor(target));
+      mesh.position.set(0, 0, 0);
+      mesh.rotation.set(0, 0, 0);
+      mesh.scale.set(1, 1, 1);
+      const removedItems = [target, ...holes];
+      removedItems.forEach((object) => sceneRef.current.remove(object));
+      objectsRef.current = objectsRef.current.filter((object) => !removedItems.includes(object));
       objectsRef.current.push(mesh);
       sceneRef.current.add(mesh);
       refreshObjects();
       attachTransformForSelection([mesh.uuid]);
-      setBooleanMessage('布林打洞完成。');
+      const extraSolidMessage = solids.length > 1 ? '已使用第一個 Solid 作為目標。' : '';
+      setBooleanMessage('布林打洞完成。' + extraSolidMessage);
       showToast('已套用打洞');
     } catch (error) {
       console.error('Boolean Difference failed', error);
-      setBooleanMessage(`布林運算失敗：${error.message}`);
+      setBooleanMessage('布林運算失敗：' + error.message);
       showToast('打洞失敗，請確認 Solid 和 Hole 有重疊');
     }
   }
@@ -3039,6 +3116,7 @@ export default function App() {
               multiSelect={multiSelect}
               setMultiSelect={setMultiSelect}
               selectedCount={selectedIds.length}
+              selectedObjects={selectedObjects}
               primarySelected={primarySelected}
               duplicateSelected={duplicateSelected}
               deleteSelected={deleteSelectedWithConfirm}
@@ -3139,6 +3217,7 @@ function ObjectToolsPanel({
   multiSelect,
   setMultiSelect,
   selectedCount,
+  selectedObjects,
   primarySelected,
   duplicateSelected,
   deleteSelected,
@@ -3160,6 +3239,12 @@ function ObjectToolsPanel({
   clearMeasure,
 }) {
   const distance = measurePoints.length === 2 ? measurePoints[0].distanceTo(measurePoints[1]) : null;
+  const solidCount = selectedObjects.filter((object) => object.userData.mode !== 'hole').length;
+  const holeCount = selectedObjects.filter((object) => object.userData.mode === 'hole').length;
+  const canGroup = selectedObjects.length >= 2;
+  const canMerge = solidCount >= 2;
+  const canBoolean = solidCount >= 1 && holeCount >= 1;
+  const canUngroup = !!primarySelected?.isGroup;
   return (
     <section className="printer-card object-tools-card">
       <div className="card-title">Object Mode 工具</div>
@@ -3175,13 +3260,13 @@ function ObjectToolsPanel({
         <button onClick={deleteSelected} disabled={!selectedCount}>刪除</button>
         <button onClick={centerSelectedOnPlate} disabled={!selectedCount}>置中</button>
         <button onClick={dropSelectedToPlate} disabled={!selectedCount}>貼齊平台</button>
-        <button onClick={groupSelected} disabled={selectedCount < 2}>群組</button>
-        <button onClick={ungroupSelected} disabled={!primarySelected?.isGroup}>取消群組</button>
-        <button onClick={mergeSelected} disabled={selectedCount < 2}>合併</button>
+        <button onClick={groupSelected} disabled={!canGroup} title={canGroup ? '\u5c07\u9078\u53d6\u7269\u4ef6\u5efa\u7acb\u6210\u7fa4\u7d44' : '\u8acb\u81f3\u5c11\u9078\u53d6 2 \u500b\u7269\u4ef6\u624d\u80fd\u7fa4\u7d44'}>{'\u7fa4\u7d44'}</button>
+        <button onClick={ungroupSelected} disabled={!canUngroup} title={canUngroup ? '\u53d6\u6d88\u76ee\u524d\u7fa4\u7d44' : '\u8acb\u9078\u53d6\u7fa4\u7d44'}>{'\u53d6\u6d88\u7fa4\u7d44'}</button>
+        <button onClick={mergeSelected} disabled={!canMerge} title={canMerge ? '\u5408\u4f75\u9078\u53d6\u7684 Solid \u7269\u4ef6' : '\u8acb\u81f3\u5c11\u9078\u53d6 2 \u500b\u5be6\u9ad4\u7269\u4ef6\u624d\u80fd\u5408\u4f75'}>{'\u5408\u4f75'}</button>
         <button onClick={() => setMeasureActive((value) => !value)} className={measureActive ? 'active' : ''}>Measure</button>
         <button onClick={() => setSelectedMode('solid')} disabled={!selectedCount}>設為實體</button>
         <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount}>設為洞</button>
-        <button onClick={applyHole} disabled={selectedCount < 2}>套用打洞</button>
+        <button onClick={applyHole} disabled={!canBoolean} title={canBoolean ? '\u4f7f\u7528 Hole \u7269\u4ef6\u5207\u5272 Solid' : '\u8acb\u9078\u53d6\u81f3\u5c11 1 \u500b Solid \u8207 1 \u500b Hole'}>{'\u5957\u7528\u6253\u6d1e'}</button>
       </div>
       <div className="notice">Measure：開啟後在模型表面點兩個點，即可量測直線距離。</div>
       {measurePoints.length > 0 && (
