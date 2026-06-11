@@ -1,35 +1,39 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 function isTypingTarget(target) {
   const tagName = target?.tagName?.toLowerCase();
   return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target?.isContentEditable;
 }
 
-export default function useKeyboardShortcuts({
-  activeWorkflowRef,
-  modeRef,
-  prefsRef,
-  selectedIdsRef,
-  undo,
-  redo,
-  setMode,
-  switchWorkflow,
-  setSculptSettings,
-  roundNumber,
-  setAxisLock,
-  setBoxSelectActive,
-  setContextMenu,
-  attachTransformForSelection,
-  focusSelectedObject,
-  frameAllObjects,
-  duplicateSelected,
-  toggleProjection,
-  setCameraView,
-  deleteSelectedWithConfirm,
-  showToast,
-}) {
+export default function useKeyboardShortcuts(handlers) {
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
   useEffect(() => {
     const onKeyDown = (event) => {
+      const {
+        activeWorkflowRef,
+        modeRef,
+        prefsRef,
+        selectedIdsRef,
+        undo,
+        redo,
+        setMode,
+        switchWorkflow,
+        setSculptSettings,
+        roundNumber,
+        setAxisLock,
+        setBoxSelectActive,
+        setContextMenu,
+        attachTransformForSelection,
+        focusSelectedObject,
+        frameAllObjects,
+        duplicateSelected,
+        toggleProjection,
+        setCameraView,
+        deleteSelectedWithConfirm,
+        showToast,
+      } = handlersRef.current;
       const typing = isTypingTarget(event.target);
       const key = event.key.toLowerCase();
 
@@ -108,27 +112,5 @@ export default function useKeyboardShortcuts({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    activeWorkflowRef,
-    attachTransformForSelection,
-    deleteSelectedWithConfirm,
-    duplicateSelected,
-    focusSelectedObject,
-    frameAllObjects,
-    modeRef,
-    prefsRef,
-    redo,
-    roundNumber,
-    selectedIdsRef,
-    setAxisLock,
-    setBoxSelectActive,
-    setCameraView,
-    setContextMenu,
-    setMode,
-    setSculptSettings,
-    showToast,
-    switchWorkflow,
-    toggleProjection,
-    undo,
-  ]);
+  }, []);
 }
