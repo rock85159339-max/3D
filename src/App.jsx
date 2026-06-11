@@ -754,9 +754,15 @@ export default function App() {
   const redoRef = useRef([]);
   const toastTimerRef = useRef(null);
   const objectCountRef = useRef(0);
+  const activeWorkflowRef = useRef('model');
+  const autosaveReadyRef = useRef(false);
   const [objects, setObjects] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [activeWorkflow, setActiveWorkflow] = useState('model');
+  const [projectName, setProjectName] = useState('Untitled Model');
+  const [lastAutosave, setLastAutosave] = useState('');
+  const [showGuide, setShowGuide] = useState(() => localStorage.getItem('printModeler.hideGuide') !== 'true');
   const [editMode, setEditMode] = useState('object');
   const [faceSelection, setFaceSelection] = useState(null);
   const [faceSettings, setFaceSettings] = useState({ distance: 5, radius: 20, softEdit: false, smoothStrength: 0.5 });
@@ -778,6 +784,14 @@ export default function App() {
   const primarySelected = selectedObjects[0] || null;
   const selectedCheck = primarySelected ? printCheck(primarySelected, printerSize) : null;
   const printStats = useMemo(() => getPrintStats(objectsRef.current, printerSize), [objects, printerSize.x, printerSize.y, printerSize.z]);
+
+  function switchWorkflow(nextWorkflow) {
+    setActiveWorkflow(nextWorkflow);
+    activeWorkflowRef.current = nextWorkflow;
+    if (nextWorkflow === 'face') setEditMode('face');
+    else if (nextWorkflow === 'sculpt') setEditMode('sculpt');
+    else setEditMode('object');
+  }
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -829,6 +843,21 @@ export default function App() {
     const plate = createBuildPlate(printerSize);
     scene.add(plate);
     plateRef.current = plate;
+
+    window.setTimeout(() => {
+      const saved = localStorage.getItem('printModeler.autosave');
+      if (saved && window.confirm('偵測到自動儲存的專案，要恢復嗎？')) {
+        try {
+          loadProjectData(JSON.parse(saved));
+          const time = localStorage.getItem('printModeler.autosaveTime');
+          if (time) setLastAutosave(time);
+          showToast('已恢復自動儲存');
+        } catch (error) {
+          showToast(`恢復自動儲存失敗：${error.message}`);
+        }
+      }
+      autosaveReadyRef.current = true;
+    }, 350);
 
     const onPointerDown = (event) => {
       if (transform.dragging) return;
@@ -917,14 +946,46 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!autosaveReadyRef.current) return;
+      const payload = makeProjectPayload();
+      const time = new Date().toLocaleTimeString();
+      localStorage.setItem('printModeler.autosave', JSON.stringify(payload));
+      localStorage.setItem('printModeler.autosaveTime', time);
+      setLastAutosave(time);
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [projectName, printerKey, customSize, objects, historyVersion]);
+
+  useEffect(() => {
     const onKeyDown = (event) => {
-      if (!event.ctrlKey) return;
-      if (event.key.toLowerCase() === 'z') {
+      const tagName = event.target?.tagName?.toLowerCase();
+      const typing = tagName === 'input' || tagName === 'textarea' || tagName === 'select' || event.target?.isContentEditable;
+      if (event.ctrlKey && event.key.toLowerCase() === 'z') {
         event.preventDefault();
         undo();
       } else if (event.key.toLowerCase() === 'y') {
+        if (!event.ctrlKey) return;
         event.preventDefault();
         redo();
+      } else if (!typing && event.key.toLowerCase() === 'w') {
+        setMode('translate');
+      } else if (!typing && event.key.toLowerCase() === 'e') {
+        setMode('rotate');
+      } else if (!typing && event.key.toLowerCase() === 'r') {
+        setMode('scale');
+      } else if (!typing && event.key === 'Delete') {
+        deleteSelected();
+      } else if (!typing && event.key === '1') {
+        switchWorkflow('model');
+      } else if (!typing && event.key === '2') {
+        switchWorkflow('face');
+      } else if (!typing && event.key === '3') {
+        switchWorkflow('sculpt');
+      } else if (!typing && event.key === '4') {
+        switchWorkflow('prep');
+      } else if (!typing && event.key === '5') {
+        switchWorkflow('export');
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -996,12 +1057,35 @@ export default function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(''), 2500);
   }
 
-  function makeSnapshot() {
+  function makeProjectPayload() {
     return {
+      version: 3,
+      projectName,
       printerKey,
       customSize,
       objects: objectsRef.current.map(objectToProjectData),
     };
+  }
+
+  function makeSnapshot() {
+    return makeProjectPayload();
+  }
+
+  function loadProjectData(data) {
+    detachSelectionGroup();
+    clearFaceHelper();
+    hideBrushPreview();
+    objectsRef.current.forEach((object) => {
+      sceneRef.current.remove(object);
+      disposeObject(object);
+    });
+    objectsRef.current = (data.objects || []).map(objectFromProjectData);
+    objectsRef.current.forEach((object) => sceneRef.current.add(object));
+    if (data.projectName) setProjectName(data.projectName);
+    if (data.printerKey) setPrinterKey(data.printerKey);
+    if (data.customSize) setCustomSize(data.customSize);
+    refreshObjects();
+    attachTransformForSelection([]);
   }
 
   function pushHistory(label = 'change') {
@@ -1025,6 +1109,7 @@ export default function App() {
     });
     objectsRef.current = (snapshot.objects || []).map(objectFromProjectData);
     objectsRef.current.forEach((object) => sceneRef.current.add(object));
+    if (snapshot.projectName) setProjectName(snapshot.projectName);
     if (snapshot.printerKey) setPrinterKey(snapshot.printerKey);
     if (snapshot.customSize) setCustomSize(snapshot.customSize);
     refreshObjects();
@@ -1865,21 +1950,22 @@ export default function App() {
     attachTransformForSelection([target.object.uuid]);
   }
 
-  function checkSelectedMesh() {
-    const target = getSelectedPrintableTarget();
-    if (!target) return;
-    const aggregate = target.meshes.reduce((result, mesh) => {
-      const report = inspectMeshGeometry(mesh, target.object, printerSize);
-      return {
-        triangleCount: result.triangleCount + report.triangleCount,
-        vertexCount: result.vertexCount + report.vertexCount,
-        belowPlatform: result.belowPlatform || report.belowPlatform,
-        outside: result.outside || report.outside,
-        tooThin: result.tooThin || report.tooThin,
-        invalidVertexCount: result.invalidVertexCount + report.invalidVertexCount,
-        openEdgeCount: result.openEdgeCount + report.openEdgeCount,
-        degenerateTriangleCount: result.degenerateTriangleCount + report.degenerateTriangleCount,
-      };
+  function buildMeshCheckResults(targetObjects) {
+    const aggregate = targetObjects.reduce((sceneResult, object) => {
+      const meshes = getPrintableMeshes(object);
+      return meshes.reduce((result, mesh) => {
+        const report = inspectMeshGeometry(mesh, object, printerSize);
+        return {
+          triangleCount: result.triangleCount + report.triangleCount,
+          vertexCount: result.vertexCount + report.vertexCount,
+          belowPlatform: result.belowPlatform || report.belowPlatform,
+          outside: result.outside || report.outside,
+          tooThin: result.tooThin || report.tooThin,
+          invalidVertexCount: result.invalidVertexCount + report.invalidVertexCount,
+          openEdgeCount: result.openEdgeCount + report.openEdgeCount,
+          degenerateTriangleCount: result.degenerateTriangleCount + report.degenerateTriangleCount,
+        };
+      }, sceneResult);
     }, {
       triangleCount: 0,
       vertexCount: 0,
@@ -1891,7 +1977,7 @@ export default function App() {
       degenerateTriangleCount: 0,
     });
 
-    setMeshCheckResults([
+    return [
       { label: `Triangle 數量：${aggregate.triangleCount}`, status: aggregate.triangleCount > 120000 ? 'warning' : 'ok' },
       { label: `Vertex 數量：${aggregate.vertexCount}`, status: aggregate.vertexCount > 360000 ? 'warning' : 'ok' },
       { label: aggregate.belowPlatform ? '模型低於平台' : '未低於平台', status: aggregate.belowPlatform ? 'error' : 'ok' },
@@ -1900,7 +1986,13 @@ export default function App() {
       { label: aggregate.invalidVertexCount ? `有 ${aggregate.invalidVertexCount} 個 NaN / Infinity 頂點` : '沒有 NaN / Infinity 頂點', status: aggregate.invalidVertexCount ? 'error' : 'ok' },
       { label: aggregate.openEdgeCount ? `可能有開口：${aggregate.openEdgeCount} 條邊只被使用一次` : '未偵測到開口邊', status: aggregate.openEdgeCount ? 'warning' : 'ok' },
       { label: aggregate.degenerateTriangleCount ? `有 ${aggregate.degenerateTriangleCount} 個退化 triangle` : '沒有退化 triangle', status: aggregate.degenerateTriangleCount ? 'warning' : 'ok' },
-    ]);
+    ];
+  }
+
+  function checkSelectedMesh() {
+    const target = getSelectedPrintableTarget();
+    if (!target) return;
+    setMeshCheckResults(buildMeshCheckResults([target.object]));
     showToast('已檢查模型');
   }
 
@@ -2007,7 +2099,21 @@ export default function App() {
 
   function exportModel(format) {
     detachSelectionGroup();
-    if (!objectsRef.current.length) return;
+    if (!objectsRef.current.length) {
+      showToast('沒有可匯出的物件');
+      return;
+    }
+    if (format === 'stl') {
+      const printableObjects = objectsRef.current.filter((object) => object.userData.mode !== 'hole');
+      const results = buildMeshCheckResults(printableObjects);
+      setMeshCheckResults(results);
+      const hasIssue = results.some((item) => item.status !== 'ok');
+      if (hasIssue && !window.confirm('模型可能有問題，仍要匯出嗎？')) {
+        switchWorkflow('export');
+        showToast('已取消匯出 STL');
+        return;
+      }
+    }
     const group = new THREE.Group();
     objectsRef.current.filter((object) => object.userData.mode !== 'hole').forEach((object) => group.add(object.clone(true)));
     group.updateMatrixWorld(true);
@@ -2015,16 +2121,12 @@ export default function App() {
     const data = format === 'obj' ? exporter.parse(group) : exporter.parse(group, { binary: false });
     const blob = new Blob([data], { type: format === 'obj' ? 'text/plain' : 'model/stl' });
     downloadBlob(blob, `print-model.${format}`);
+    showToast(`已匯出 ${format.toUpperCase()}`);
   }
 
   function saveProject() {
     detachSelectionGroup();
-    const payload = {
-      version: 2,
-      printerKey,
-      customSize,
-      objects: objectsRef.current.map(objectToProjectData),
-    };
+    const payload = makeProjectPayload();
     downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'print-model-project.json');
   }
 
@@ -2035,17 +2137,8 @@ export default function App() {
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result);
-        detachSelectionGroup();
-        objectsRef.current.forEach((object) => {
-          sceneRef.current.remove(object);
-          disposeObject(object);
-        });
-        objectsRef.current = (data.objects || []).map(objectFromProjectData);
-        objectsRef.current.forEach((object) => sceneRef.current.add(object));
-        if (data.printerKey) setPrinterKey(data.printerKey);
-        if (data.customSize) setCustomSize(data.customSize);
-        refreshObjects();
-        attachTransformForSelection([]);
+        loadProjectData(data);
+        showToast('已載入專案');
       } catch (error) {
         setBooleanMessage(`載入失敗：${error.message}`);
       }
@@ -2066,33 +2159,25 @@ export default function App() {
   return (
     <main className="app-shell">
       <TopToolbar>
+        <div className="project-strip">
+          <input className="project-name-input" value={projectName} onChange={(event) => setProjectName(event.target.value || 'Untitled Model')} />
+          <span>{lastAutosave ? `Autosaved ${lastAutosave}` : 'Autosave ready'}</span>
+        </div>
+        <div className="workflow-bar">
+          {[
+            ['model', '1. 建立模型'],
+            ['face', '2. 編輯形狀'],
+            ['sculpt', '3. 雕刻'],
+            ['prep', '4. 列印準備'],
+            ['export', '5. 匯出'],
+          ].map(([key, label]) => (
+            <button key={key} className={activeWorkflow === key ? 'active' : ''} onClick={() => switchWorkflow(key)}>{label}</button>
+          ))}
+        </div>
         <div className="toolbar-group">
           <button onClick={undo} disabled={!historyRef.current.length}>復原 Undo</button>
           <button onClick={redo} disabled={!redoRef.current.length}>重做 Redo</button>
-          <button onClick={() => setEditMode('object')} className={editMode === 'object' ? 'active' : ''}>Object Mode</button>
-          <button onClick={() => setEditMode('face')} className={editMode === 'face' ? 'active' : ''}>Face Mode</button>
-          <button onClick={() => setEditMode('sculpt')} className={editMode === 'sculpt' ? 'active' : ''}>Sculpt Mode</button>
-          <button onClick={() => setMultiSelect((value) => !value)} className={multiSelect ? 'active' : ''}>多選</button>
-          <button onClick={() => addShape('cube')}><Box size={18} />新增</button>
-          <button onClick={duplicateSelected} disabled={!selectedIds.length}><Copy size={18} />複製</button>
           <button className="danger" onClick={deleteSelected} disabled={!selectedIds.length}><Trash2 size={18} />刪除</button>
-          <button onClick={centerSelectedOnPlate} disabled={!selectedIds.length}>置中</button>
-          <button onClick={dropSelectedToPlate} disabled={!selectedIds.length}>貼齊平台</button>
-          <button onClick={() => mirrorSelected('x')} disabled={!selectedIds.length}>鏡像 X</button>
-          <button onClick={() => mirrorSelected('y')} disabled={!selectedIds.length}>鏡像 Y</button>
-          <button onClick={() => mirrorSelected('z')} disabled={!selectedIds.length}>鏡像 Z</button>
-          <button onClick={groupSelected} disabled={selectedIds.length < 2}>群組</button>
-          <button onClick={ungroupSelected} disabled={!primarySelected?.isGroup}>取消群組</button>
-          <button onClick={mergeSelected} disabled={selectedIds.length < 2}>合併</button>
-          <button onClick={() => setSelectedMode('solid')} disabled={!selectedIds.length}>設為實體</button>
-          <button onClick={() => setSelectedMode('hole')} disabled={!selectedIds.length}>設為洞</button>
-          <button onClick={applyHole} disabled={selectedIds.length < 2}>套用打洞</button>
-        </div>
-        <div className="toolbar-group">
-          <button onClick={() => exportModel('stl')} disabled={!objects.length}><Download size={18} />STL</button>
-          <button onClick={() => exportModel('obj')} disabled={!objects.length}><Download size={18} />OBJ</button>
-          <button onClick={saveProject}>儲存專案</button>
-          <button onClick={() => fileInputRef.current?.click()}>載入專案</button>
           <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={loadProjectFile} />
           <button onClick={resetCameraView}>重設視角</button>
         </div>
@@ -2108,6 +2193,16 @@ export default function App() {
         </label>
       </TopToolbar>
 
+      {showGuide && (
+        <GuidePanel
+          onClose={() => setShowGuide(false)}
+          onNeverShow={() => {
+            localStorage.setItem('printModeler.hideGuide', 'true');
+            setShowGuide(false);
+          }}
+        />
+      )}
+
       <LeftPanel>
         <div className="brand"><span className="brand-mark">mm</span><span>Print Modeler</span></div>
         <div className="tool-section">
@@ -2117,47 +2212,6 @@ export default function App() {
             return <button key={type} className="tool-button" onClick={() => addShape(type)}><Icon size={20} /><span>{shape.label}</span></button>;
           })}
           <button className="tool-button" onClick={addText}><Type size={20} /><span>文字</span></button>
-        </div>
-        <div className="tool-section">
-          <span className="section-label">建模工具</span>
-          <button className="tool-button" onClick={() => setSelectedMode('solid')} disabled={!selectedIds.length}>實體 Solid</button>
-          <button className="tool-button" onClick={() => setSelectedMode('hole')} disabled={!selectedIds.length}>打洞 Hole</button>
-          <button className="tool-button" onClick={mergeSelected} disabled={selectedIds.length < 2}>合併 Merge</button>
-          <button className="tool-button" onClick={applyHole} disabled={selectedIds.length < 2}>套用打洞</button>
-          <button className="tool-button" onClick={() => mirrorSelected('x')} disabled={!selectedIds.length}>Mirror X</button>
-          <button className="tool-button" onClick={() => mirrorSelected('y')} disabled={!selectedIds.length}>Mirror Y</button>
-          <button className="tool-button" onClick={() => mirrorSelected('z')} disabled={!selectedIds.length}>Mirror Z</button>
-        </div>
-        <div className="tool-section compact-tools">
-          <span className="section-label">對齊 Align</span>
-          <div className="mini-grid">
-            <button onClick={() => alignSelected('x', 'min')} disabled={selectedIds.length < 2}>X 左</button>
-            <button onClick={() => alignSelected('x', 'center')} disabled={selectedIds.length < 2}>X 中</button>
-            <button onClick={() => alignSelected('x', 'max')} disabled={selectedIds.length < 2}>X 右</button>
-            <button onClick={() => alignSelected('y', 'min')} disabled={selectedIds.length < 2}>Y 前</button>
-            <button onClick={() => alignSelected('y', 'center')} disabled={selectedIds.length < 2}>Y 中</button>
-            <button onClick={() => alignSelected('y', 'max')} disabled={selectedIds.length < 2}>Y 後</button>
-            <button onClick={() => alignSelected('z', 'min')} disabled={selectedIds.length < 2}>Z 底</button>
-            <button onClick={() => alignSelected('z', 'center')} disabled={selectedIds.length < 2}>Z 中</button>
-            <button onClick={() => alignSelected('z', 'max')} disabled={selectedIds.length < 2}>Z 頂</button>
-          </div>
-        </div>
-        <div className="tool-section array-panel">
-          <span className="section-label">陣列複製</span>
-          <MiniNumber label="數量" value={arraySettings.count} onChange={(value) => setArraySettings((settings) => ({ ...settings, count: value }))} />
-          <MiniNumber label="X 間距" value={arraySettings.x} onChange={(value) => setArraySettings((settings) => ({ ...settings, x: value }))} />
-          <MiniNumber label="Y 間距" value={arraySettings.y} onChange={(value) => setArraySettings((settings) => ({ ...settings, y: value }))} />
-          <MiniNumber label="Z 間距" value={arraySettings.z} onChange={(value) => setArraySettings((settings) => ({ ...settings, z: value }))} />
-          <button className="tool-button" onClick={arrayDuplicate} disabled={!selectedIds.length}>建立陣列</button>
-        </div>
-        <div className="tool-section">
-          <span className="section-label">變形工具</span>
-          <div className="segmented">
-            {MODE_BUTTONS.map((item) => {
-              const Icon = item.icon;
-              return <button key={item.mode} className={mode === item.mode ? 'active' : ''} onClick={() => setMode(item.mode)} title={item.label}><Icon size={18} /></button>;
-            })}
-          </div>
         </div>
       </LeftPanel>
 
@@ -2170,6 +2224,7 @@ export default function App() {
           <span>{selected ? selected.name : '未選取物件'}</span>
         </div>
         <div ref={mountRef} className="three-viewport" />
+        {!objects.length && <div className="empty-scene-hint">從左側新增一個基本物件開始建模</div>}
       </section>
 
       <RightPanel>
@@ -2201,21 +2256,30 @@ export default function App() {
           </div>
         </section>
 
-        <PrintPrepPanel
-          settings={printPrepSettings}
-          onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
-          onSubdivide={subdivideSelectedModel}
-          onSmooth={smoothSelectedModel}
-          onRecalculate={recalculateSelectedNormals}
-          onPlace={placeSelectedOnBed}
-          onCenter={centerSelectedOnBed}
-          onApplyTransform={applySelectedTransform}
-          onCheck={checkSelectedMesh}
-          results={meshCheckResults}
-          disabled={!primarySelected}
-        />
-
-        {editMode === 'face' ? (
+        {activeWorkflow === 'prep' ? (
+          <PrintPrepPanel
+            settings={printPrepSettings}
+            onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
+            onSubdivide={subdivideSelectedModel}
+            onSmooth={smoothSelectedModel}
+            onRecalculate={recalculateSelectedNormals}
+            onPlace={placeSelectedOnBed}
+            onCenter={centerSelectedOnBed}
+            onApplyTransform={applySelectedTransform}
+            onCheck={checkSelectedMesh}
+            results={meshCheckResults}
+            disabled={!primarySelected}
+          />
+        ) : activeWorkflow === 'export' ? (
+          <ExportPanel
+            onExportStl={() => exportModel('stl')}
+            onExportObj={() => exportModel('obj')}
+            onSave={saveProject}
+            onLoad={() => fileInputRef.current?.click()}
+            hasObjects={objects.length > 0}
+            checkResults={meshCheckResults}
+          />
+        ) : activeWorkflow === 'face' ? (
           <FaceEditPanel
             faceSelection={faceSelection}
             settings={faceSettings}
@@ -2224,7 +2288,7 @@ export default function App() {
             onPush={() => moveSelectedFace(-1)}
             onSmooth={smoothSelectedFace}
           />
-        ) : editMode === 'sculpt' ? (
+        ) : activeWorkflow === 'sculpt' ? (
           <SculptPanel
             settings={sculptSettings}
             onSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
@@ -2237,6 +2301,28 @@ export default function App() {
               <label className="field"><span>物件模式</span><select value={primarySelected?.userData.mode || 'solid'} onChange={(event) => updateSelected('mode', null, event.target.value)}><option value="solid">Solid</option><option value="hole">Hole</option></select></label>
               <label className="field"><span>顏色</span><input type="color" value={primarySelected?.userData.color || '#38bdf8'} onChange={(event) => updateSelected('color', null, event.target.value)} /></label>
             </div>
+            <ObjectToolsPanel
+              mode={mode}
+              setMode={setMode}
+              multiSelect={multiSelect}
+              setMultiSelect={setMultiSelect}
+              selectedCount={selectedIds.length}
+              primarySelected={primarySelected}
+              duplicateSelected={duplicateSelected}
+              deleteSelected={deleteSelected}
+              centerSelectedOnPlate={centerSelectedOnPlate}
+              dropSelectedToPlate={dropSelectedToPlate}
+              setSelectedMode={setSelectedMode}
+              mergeSelected={mergeSelected}
+              applyHole={applyHole}
+              mirrorSelected={mirrorSelected}
+              alignSelected={alignSelected}
+              arraySettings={arraySettings}
+              setArraySettings={setArraySettings}
+              arrayDuplicate={arrayDuplicate}
+              groupSelected={groupSelected}
+              ungroupSelected={ungroupSelected}
+            />
             <div className="notice">Hole 物件不會被列印，只用來切掉 Solid。</div>
             <TransformFields title="位置" unit="mm" data={selected.position} onChange={(axis, value) => updateSelected('position', axis, value)} />
             <TransformFields title="旋轉" unit="deg" data={selected.rotation} onChange={(axis, value) => updateSelected('rotation', axis, value)} step="15" />
@@ -2266,6 +2352,119 @@ function TransformFields({ title, data, onChange, step = '0.1', unit, labels = {
         </label>
       ))}
     </fieldset>
+  );
+}
+
+function GuidePanel({ onClose, onNeverShow }) {
+  return (
+    <section className="guide-panel">
+      <div>
+        <strong>操作指南</strong>
+        <ol>
+          <li>從左側新增 Cube / Sphere / Cylinder。</li>
+          <li>使用移動、旋轉、縮放調整位置。</li>
+          <li>切到 Face Mode 可推拉表面。</li>
+          <li>切到 Sculpt Mode 可用筆刷雕刻。</li>
+          <li>用 Print Prep 檢查模型。</li>
+          <li>匯出 STL 進行 3D 列印。</li>
+        </ol>
+        <p>快捷鍵：W 移動、E 旋轉、R 縮放、Delete 刪除、Ctrl+Z 復原、Ctrl+Y 重做、1-5 切換流程。</p>
+      </div>
+      <div className="guide-actions">
+        <button onClick={onClose}>關閉</button>
+        <button onClick={onNeverShow}>不再顯示</button>
+      </div>
+    </section>
+  );
+}
+
+function ObjectToolsPanel({
+  mode,
+  setMode,
+  multiSelect,
+  setMultiSelect,
+  selectedCount,
+  primarySelected,
+  duplicateSelected,
+  deleteSelected,
+  centerSelectedOnPlate,
+  dropSelectedToPlate,
+  setSelectedMode,
+  mergeSelected,
+  applyHole,
+  mirrorSelected,
+  alignSelected,
+  arraySettings,
+  setArraySettings,
+  arrayDuplicate,
+  groupSelected,
+  ungroupSelected,
+}) {
+  return (
+    <section className="printer-card object-tools-card">
+      <div className="card-title">Object Mode 工具</div>
+      <div className="segmented">
+        {MODE_BUTTONS.map((item) => {
+          const Icon = item.icon;
+          return <button key={item.mode} className={mode === item.mode ? 'active' : ''} onClick={() => setMode(item.mode)} title={item.label}><Icon size={18} /></button>;
+        })}
+      </div>
+      <div className="prep-grid">
+        <button onClick={() => setMultiSelect((value) => !value)} className={multiSelect ? 'active' : ''}>多選</button>
+        <button onClick={duplicateSelected} disabled={!selectedCount}><Copy size={14} /> 複製</button>
+        <button onClick={deleteSelected} disabled={!selectedCount}>刪除</button>
+        <button onClick={centerSelectedOnPlate} disabled={!selectedCount}>置中</button>
+        <button onClick={dropSelectedToPlate} disabled={!selectedCount}>貼齊平台</button>
+        <button onClick={groupSelected} disabled={selectedCount < 2}>群組</button>
+        <button onClick={ungroupSelected} disabled={!primarySelected?.isGroup}>取消群組</button>
+        <button onClick={mergeSelected} disabled={selectedCount < 2}>合併</button>
+        <button onClick={() => setSelectedMode('solid')} disabled={!selectedCount}>設為實體</button>
+        <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount}>設為洞</button>
+        <button onClick={applyHole} disabled={selectedCount < 2}>套用打洞</button>
+      </div>
+      <div className="mini-grid">
+        <button onClick={() => mirrorSelected('x')} disabled={!selectedCount}>Mirror X</button>
+        <button onClick={() => mirrorSelected('y')} disabled={!selectedCount}>Mirror Y</button>
+        <button onClick={() => mirrorSelected('z')} disabled={!selectedCount}>Mirror Z</button>
+        <button onClick={() => alignSelected('x', 'min')} disabled={selectedCount < 2}>X 左</button>
+        <button onClick={() => alignSelected('x', 'center')} disabled={selectedCount < 2}>X 中</button>
+        <button onClick={() => alignSelected('x', 'max')} disabled={selectedCount < 2}>X 右</button>
+        <button onClick={() => alignSelected('y', 'min')} disabled={selectedCount < 2}>Y 前</button>
+        <button onClick={() => alignSelected('y', 'center')} disabled={selectedCount < 2}>Y 中</button>
+        <button onClick={() => alignSelected('y', 'max')} disabled={selectedCount < 2}>Y 後</button>
+        <button onClick={() => alignSelected('z', 'min')} disabled={selectedCount < 2}>Z 底</button>
+        <button onClick={() => alignSelected('z', 'center')} disabled={selectedCount < 2}>Z 中</button>
+        <button onClick={() => alignSelected('z', 'max')} disabled={selectedCount < 2}>Z 頂</button>
+      </div>
+      <div className="row-fields">
+        <MiniNumber label="陣列數量" value={arraySettings.count} onChange={(value) => setArraySettings((settings) => ({ ...settings, count: value }))} />
+        <MiniNumber label="X 間距" value={arraySettings.x} onChange={(value) => setArraySettings((settings) => ({ ...settings, x: value }))} />
+      </div>
+      <div className="row-fields">
+        <MiniNumber label="Y 間距" value={arraySettings.y} onChange={(value) => setArraySettings((settings) => ({ ...settings, y: value }))} />
+        <MiniNumber label="Z 間距" value={arraySettings.z} onChange={(value) => setArraySettings((settings) => ({ ...settings, z: value }))} />
+      </div>
+      <button className="wide-action" onClick={arrayDuplicate} disabled={!selectedCount}>建立陣列複製</button>
+    </section>
+  );
+}
+
+function ExportPanel({ onExportStl, onExportObj, onSave, onLoad, hasObjects, checkResults }) {
+  const hasIssue = checkResults?.some((item) => item.status !== 'ok');
+  return (
+    <div className="property-stack">
+      <section className="printer-card export-card">
+        <div className="card-title">匯出</div>
+        <div className="notice">匯出 STL 前會自動檢查模型；如果有警告或錯誤，會先詢問是否仍要匯出。</div>
+        {hasIssue && <div className="notice warning-note">目前檢查結果有警告或錯誤，建議先到 Print Prep 修復。</div>}
+        <div className="prep-grid">
+          <button onClick={onExportStl} disabled={!hasObjects}><Download size={14} /> 匯出 STL</button>
+          <button onClick={onExportObj} disabled={!hasObjects}><Download size={14} /> 匯出 OBJ</button>
+          <button onClick={onSave}>儲存 JSON</button>
+          <button onClick={onLoad}>載入 JSON</button>
+        </div>
+      </section>
+    </div>
   );
 }
 
