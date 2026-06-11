@@ -487,6 +487,7 @@ function App() {
   const orbitRef = useRef(null);
   const transformRef = useRef(null);
   const plateRef = useRef(null);
+  const selectionHelpersRef = useRef([]);
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
   const objectsRef = useRef([]);
@@ -594,6 +595,7 @@ function App() {
     const animate = () => {
       animationId = requestAnimationFrame(animate);
       orbit.update();
+      selectionHelpersRef.current.forEach((helper) => helper.update());
       renderer.render(scene, camera);
     };
     animate();
@@ -654,6 +656,30 @@ function App() {
     selectionGroupRef.current = null;
   }
 
+  function clearSelectionHelpers() {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    selectionHelpersRef.current.forEach((helper) => {
+      scene.remove(helper);
+      helper.geometry?.dispose?.();
+      helper.material?.dispose?.();
+    });
+    selectionHelpersRef.current = [];
+  }
+
+  function updateSelectionHelpers(selectedItems) {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    clearSelectionHelpers();
+    selectionHelpersRef.current = selectedItems.map((object) => {
+      const color = object.userData.mode === 'hole' ? 0xff6b6b : 0x38bdf8;
+      const helper = new THREE.BoxHelper(object, color);
+      helper.userData.helper = true;
+      scene.add(helper);
+      return helper;
+    });
+  }
+
   function attachTransformForSelection(ids) {
     const transform = transformRef.current;
     const scene = sceneRef.current;
@@ -662,6 +688,7 @@ function App() {
     const selectedItems = objectsRef.current.filter((object) => ids.includes(object.uuid));
     selectedIdsRef.current = ids;
     setSelectedIds(ids);
+    updateSelectionHelpers(selectedItems);
 
     if (!selectedItems.length) {
       transform.detach();
@@ -756,6 +783,42 @@ function App() {
     });
     refreshObjects();
     attachTransformForSelection(clones.map((clone) => clone.uuid));
+  }
+
+  function centerSelectedOnPlate() {
+    const target = selectedRef.current;
+    if (!target) return;
+    const { center } = getObjectBounds(target);
+    target.position.x -= center.x;
+    target.position.y -= center.y;
+    setSelected(readTransform(target));
+    refreshObjects();
+  }
+
+  function dropSelectedToPlate() {
+    const target = selectedRef.current;
+    if (!target) return;
+    const { box } = getObjectBounds(target);
+    target.position.z -= box.min.z;
+    setSelected(readTransform(target));
+    refreshObjects();
+  }
+
+  function mirrorSelected(axis) {
+    const target = selectedRef.current;
+    if (!target) return;
+    target.scale[axis] *= -1;
+    setSelected(readTransform(target));
+    refreshObjects();
+  }
+
+  function resetCameraView() {
+    const camera = cameraRef.current;
+    const orbit = orbitRef.current;
+    if (!camera || !orbit) return;
+    camera.position.set(220, -260, 180);
+    orbit.target.set(0, 0, 25);
+    orbit.update();
   }
 
   function groupSelected() {
@@ -971,6 +1034,10 @@ function App() {
           <button onClick={() => addShape('cube')}><Box size={18} />新增</button>
           <button onClick={duplicateSelected} disabled={!selectedIds.length}><Copy size={18} />複製</button>
           <button className="danger" onClick={deleteSelected} disabled={!selectedIds.length}><Trash2 size={18} />刪除</button>
+          <button onClick={centerSelectedOnPlate} disabled={!selectedIds.length}>置中</button>
+          <button onClick={dropSelectedToPlate} disabled={!selectedIds.length}>貼齊平台</button>
+          <button onClick={() => mirrorSelected('x')} disabled={!selectedIds.length}>鏡像 X</button>
+          <button onClick={() => mirrorSelected('y')} disabled={!selectedIds.length}>鏡像 Y</button>
           <button onClick={groupSelected} disabled={selectedIds.length < 2}>群組</button>
           <button onClick={ungroupSelected} disabled={!primarySelected?.isGroup}>取消群組</button>
           <button onClick={mergeSelected} disabled={selectedIds.length < 2}>合併</button>
@@ -984,6 +1051,7 @@ function App() {
           <button onClick={saveProject}>儲存專案</button>
           <button onClick={() => fileInputRef.current?.click()}>載入專案</button>
           <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={loadProjectFile} />
+          <button onClick={resetCameraView}>重設視角</button>
         </div>
         <label className="switch-control">
           <input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />
