@@ -38,6 +38,10 @@ import QuickStartCards from './components/QuickStartCards.jsx';
 import RightPanelTabs from './components/RightPanelTabs.jsx';
 import CommonToolsPanel from './components/CommonToolsPanel.jsx';
 import SelectionSizeInfo from './components/SelectionSizeInfo.jsx';
+import ModelingModeToolbar from './components/ModelingModeToolbar.jsx';
+import ModelingToolPanel from './components/ModelingToolPanel.jsx';
+import ViewAssistPanel from './components/ViewAssistPanel.jsx';
+import ModeHintOverlay from './components/ModeHintOverlay.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { applyCameraView, applyOrbitControlStyle, focusCameraOnBox as focusCameraOnBoxUtil, toggleCameraProjectionFov } from './utils/cameraUtils.js';
@@ -57,6 +61,16 @@ import {
   extrudeTriangleFaceGeometry,
   insetTriangleFaceGeometry,
 } from './utils/extrudeUtils.js';
+import {
+  getClosestEdgeFromIntersection,
+  getClosestVertexFromIntersection,
+} from './utils/selectionHelpers.js';
+import {
+  createEdgeHighlight,
+  createVertexCloud,
+  createVertexHighlight,
+  createWireframeOverlay,
+} from './utils/modelingVisuals.js';
 
 const font = new FontLoader().parse(helvetikerFont);
 const MAX_HISTORY = 50;
@@ -879,6 +893,9 @@ export default function App() {
   const brushPreviewRef = useRef(null);
   const measureHelperRef = useRef(null);
   const repairHelperRef = useRef(null);
+  const edgeHelperRef = useRef(null);
+  const vertexHelperRef = useRef(null);
+  const viewAssistHelpersRef = useRef([]);
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
   const objectsRef = useRef([]);
@@ -916,6 +933,16 @@ export default function App() {
   const [activeWorkflow, setActiveWorkflow] = useState('model');
   const [uiMode, setUiMode] = useState('beginner');
   const [rightPanelTab, setRightPanelTab] = useState('properties');
+  const [modelingMode, setModelingMode] = useState('object');
+  const [edgeSelection, setEdgeSelection] = useState(null);
+  const [vertexSelection, setVertexSelection] = useState(null);
+  const [viewAssist, setViewAssist] = useState({
+    wireframe: false,
+    vertices: false,
+    faceNormals: false,
+    boundingBox: true,
+    dimensions: false,
+  });
   const [projectName, setProjectName] = useState('未命名模型');
   const [lastAutosave, setLastAutosave] = useState('');
   const [showGuide, setShowGuide] = useState(() => localStorage.getItem('printModeler.hideGuide') !== 'true');
@@ -1020,6 +1047,9 @@ export default function App() {
     }
     setActiveWorkflow(nextWorkflow);
     activeWorkflowRef.current = nextWorkflow;
+    if (nextWorkflow === 'face') setModelingMode('face');
+    else if (nextWorkflow === 'sculpt') setModelingMode('sculpt');
+    else setModelingMode('object');
     if (nextWorkflow === 'face') setEditMode('face');
     else if (nextWorkflow === 'sculpt') setEditMode('sculpt');
     else setEditMode('object');
@@ -1030,6 +1060,35 @@ export default function App() {
       switchWorkflow('model');
     }
   }, [uiMode]);
+
+  function switchModelingMode(nextMode) {
+    setModelingMode(nextMode);
+    clearFaceHelper();
+    clearEdgeHelper();
+    clearVertexHelper();
+    setEdgeSelection(null);
+    setVertexSelection(null);
+    setRightPanelTab(nextMode === 'object' ? 'properties' : 'properties');
+    if (nextMode === 'object') {
+      setEditMode('object');
+      switchWorkflow('model');
+      attachTransformForSelection([...selectedIdsRef.current]);
+    } else if (nextMode === 'face') {
+      setEditMode('face');
+      switchWorkflow('face');
+    } else if (nextMode === 'sculpt') {
+      setEditMode('sculpt');
+      if (uiMode === 'advanced') switchWorkflow('sculpt');
+      else setActiveWorkflow('model');
+    } else {
+      setEditMode(nextMode);
+      setActiveWorkflow('model');
+      activeWorkflowRef.current = 'model';
+      if (nextMode === 'edge') setViewAssist((settings) => ({ ...settings, wireframe: true }));
+      if (nextMode === 'vertex') setViewAssist((settings) => ({ ...settings, vertices: true }));
+      transformRef.current?.detach();
+    }
+  }
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -1195,6 +1254,20 @@ export default function App() {
         pickFaceFromPointer();
         return;
       }
+      if (editModeRef.current === 'edge') {
+        if (event.altKey || event.shiftKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        pickEdgeFromPointer();
+        return;
+      }
+      if (editModeRef.current === 'vertex') {
+        if (event.altKey || event.shiftKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        pickVertexFromPointer();
+        return;
+      }
       const meshes = objectsRef.current.flatMap((object) => getPrintableMeshes(object));
       const hits = raycasterRef.current.intersectObjects(meshes, false);
       const hitObject = hits[0]?.object;
@@ -1332,6 +1405,7 @@ export default function App() {
       orbit.enabled = true;
       clearBrushPreview();
       clearRepairHelper();
+      clearViewAssistHelpers();
       transform.dispose();
       orbit.dispose();
       disposeObject(scene);
@@ -1385,15 +1459,17 @@ export default function App() {
     editModeRef.current = editMode;
     const transform = transformRef.current;
     if (!transform) return;
-    if (editMode === 'face' || editMode === 'sculpt') {
+    if (editMode !== 'object') {
       if (!selectedIdsRef.current.length) showToast('請先選取一個 mesh 物件');
       transform.detach();
       detachSelectionGroup();
-      if (editMode === 'face') hideBrushPreview();
-      if (editMode === 'sculpt') clearFaceHelper();
+      if (editMode !== 'sculpt') hideBrushPreview();
+      if (editMode !== 'face') clearFaceHelper();
       setSelected(primarySelected ? readTransform(primarySelected) : null);
     } else {
       clearFaceHelper();
+      clearEdgeHelper();
+      clearVertexHelper();
       hideBrushPreview();
       endSculptStroke();
       attachTransformForSelection(selectedIdsRef.current);
@@ -1409,6 +1485,36 @@ export default function App() {
   useEffect(() => {
     measureActiveRef.current = measureActive;
   }, [measureActive]);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    clearViewAssistHelpers();
+    const targets = selectedObjects.length ? selectedObjects : objectsRef.current;
+    targets.forEach((object) => {
+      if (viewAssist.wireframe) {
+        const helper = createWireframeOverlay(object, THREE);
+        if (helper.children.length) {
+          scene.add(helper);
+          viewAssistHelpersRef.current.push(helper);
+        }
+      }
+      if (viewAssist.vertices) {
+        const helper = createVertexCloud(object, THREE);
+        if (helper.children.length) {
+          scene.add(helper);
+          viewAssistHelpersRef.current.push(helper);
+        }
+      }
+      if (viewAssist.boundingBox) {
+        const helper = new THREE.BoxHelper(object, 0x22c55e);
+        helper.userData.helper = true;
+        scene.add(helper);
+        viewAssistHelpersRef.current.push(helper);
+      }
+    });
+    return () => clearViewAssistHelpers();
+  }, [viewAssist, selectedIds, objects]);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -1676,6 +1782,41 @@ export default function App() {
     setFaceSelection(null);
   }
 
+  function clearEdgeHelper() {
+    const scene = sceneRef.current;
+    if (!scene || !edgeHelperRef.current) return;
+    scene.remove(edgeHelperRef.current);
+    edgeHelperRef.current.geometry?.dispose?.();
+    edgeHelperRef.current.material?.dispose?.();
+    edgeHelperRef.current = null;
+  }
+
+  function clearVertexHelper() {
+    const scene = sceneRef.current;
+    if (!scene || !vertexHelperRef.current) return;
+    scene.remove(vertexHelperRef.current);
+    disposeObject(vertexHelperRef.current);
+    vertexHelperRef.current = null;
+  }
+
+  function showEdgeHelper(edge) {
+    const scene = sceneRef.current;
+    if (!scene || !edge?.points?.length) return;
+    clearEdgeHelper();
+    const helper = createEdgeHighlight(edge.points, THREE);
+    scene.add(helper);
+    edgeHelperRef.current = helper;
+  }
+
+  function showVertexHelper(vertex) {
+    const scene = sceneRef.current;
+    if (!scene || !vertex?.point) return;
+    clearVertexHelper();
+    const helper = createVertexHighlight(vertex.point, THREE);
+    scene.add(helper);
+    vertexHelperRef.current = helper;
+  }
+
   function ensureBrushPreview() {
     const scene = sceneRef.current;
     if (!scene) return null;
@@ -1728,6 +1869,16 @@ export default function App() {
     scene.remove(repairHelperRef.current);
     disposeObject(repairHelperRef.current);
     repairHelperRef.current = null;
+  }
+
+  function clearViewAssistHelpers() {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    viewAssistHelpersRef.current.forEach((helper) => {
+      scene.remove(helper);
+      disposeObject(helper);
+    });
+    viewAssistHelpersRef.current = [];
   }
 
   function showHoleHelpers(target) {
@@ -1910,6 +2061,54 @@ export default function App() {
     showFaceHelper(hit.object, hit.faceIndex);
   }
 
+  function pickEdgeFromPointer() {
+    const root = objectsRef.current.find((object) => object.uuid === selectedIdsRef.current[0]);
+    if (!root) {
+      showToast('請先選取一個物件');
+      return;
+    }
+    const hit = raycasterRef.current.intersectObjects(getPrintableMeshes(root), false)[0];
+    const edge = getClosestEdgeFromIntersection(hit, THREE);
+    if (!edge) {
+      clearEdgeHelper();
+      setEdgeSelection(null);
+      showToast('請點選模型邊線附近');
+      return;
+    }
+    showEdgeHelper(edge);
+    setEdgeSelection({
+      edgeIndex: edge.edgeIndex,
+      length: roundNumber(edge.length, 2),
+      faceIndex: edge.faceIndex,
+    });
+  }
+
+  function pickVertexFromPointer() {
+    const root = objectsRef.current.find((object) => object.uuid === selectedIdsRef.current[0]);
+    if (!root) {
+      showToast('請先選取一個物件');
+      return;
+    }
+    const hit = raycasterRef.current.intersectObjects(getPrintableMeshes(root), false)[0];
+    const vertex = getClosestVertexFromIntersection(hit, THREE);
+    if (!vertex) {
+      clearVertexHelper();
+      setVertexSelection(null);
+      showToast('請點選模型頂點附近');
+      return;
+    }
+    showVertexHelper(vertex);
+    setVertexSelection({
+      vertexIndex: vertex.vertexIndex,
+      point: {
+        x: roundNumber(vertex.point.x, 2),
+        y: roundNumber(vertex.point.y, 2),
+        z: roundNumber(vertex.point.z, 2),
+      },
+      faceIndex: vertex.faceIndex,
+    });
+  }
+
   function applySculptStroke(hit) {
     if (!hit?.object || hit.faceIndex == null) return false;
     const mesh = hit.object;
@@ -2048,6 +2247,10 @@ export default function App() {
     const scene = sceneRef.current;
     if (!transform || !scene) return;
     clearFaceHelper();
+    clearEdgeHelper();
+    clearVertexHelper();
+    setEdgeSelection(null);
+    setVertexSelection(null);
     detachSelectionGroup();
     const selectedItems = objectsRef.current.filter((object) => ids.includes(object.uuid) && object.visible !== false && !object.userData.locked);
     const safeIds = selectedItems.map((object) => object.uuid);
@@ -3253,6 +3456,24 @@ export default function App() {
     showToast(result.message || '內縮擠出尚未支援');
   }
 
+  function deleteSelectedFaceStub() {
+    showToast('刪除面工具下一版開放，請先使用平面裁切或布林挖洞');
+  }
+
+  function flipSelectedFaceStub() {
+    showToast('翻轉面工具下一版開放，請先使用「修正表面方向」整理法線');
+  }
+
+  function updateFreeformSculptSetting(key, value) {
+    if (key === 'tool') {
+      const modeMap = { pull: 'raise', push: 'lower', smooth: 'smooth' };
+      setSculptSettings((settings) => ({ ...settings, brushMode: modeMap[value] || 'raise' }));
+      return;
+    }
+    const targetKey = key === 'radius' ? 'radius' : key === 'strength' ? 'strength' : key;
+    setSculptSettings((settings) => ({ ...settings, [targetKey]: value }));
+  }
+
   function smoothSelectedFace() {
     const face = currentFaceRef.current;
     if (!face?.mesh) {
@@ -3410,6 +3631,8 @@ export default function App() {
         })}
       </nav>
 
+      <ModelingModeToolbar value={modelingMode} onChange={switchModelingMode} />
+
       {showGuide && (
         <GuidePanel
           onClose={() => setShowGuide(false)}
@@ -3493,6 +3716,7 @@ export default function App() {
         <div ref={mountRef} className="three-viewport" />
         <ViewCube cameraProjection={cameraProjection} onView={setCameraView} onToggleProjection={toggleProjection} />
         <BoxSelectOverlay rect={boxSelectRect} mountRef={mountRef} />
+        <ModeHintOverlay mode={modelingMode} />
         {!objects.length && (
           <QuickStartCards
             onBasic={createBeginnerBasicModel}
@@ -3523,6 +3747,28 @@ export default function App() {
             {rightPanelTab === 'properties' && (
               <div className="property-stack">
                 <SelectionSizeInfo info={selectionSizeInfo} />
+                <ModelingToolPanel
+                  modelingMode={modelingMode}
+                  faceSelection={faceSelection}
+                  edgeSelection={edgeSelection}
+                  vertexSelection={vertexSelection}
+                  sculptSettings={{
+                    tool: sculptSettings.brushMode === 'lower' ? 'push' : sculptSettings.brushMode === 'smooth' ? 'smooth' : 'pull',
+                    radius: sculptSettings.radius,
+                    strength: sculptSettings.strength,
+                  }}
+                  onSculptSettingChange={updateFreeformSculptSetting}
+                  onExtrude={() => extrudeSelectedFace(1)}
+                  onInset={insetExtrudeSelectedFace}
+                  onDeleteFace={deleteSelectedFaceStub}
+                  onFlipFace={flipSelectedFaceStub}
+                  onStub={showToast}
+                />
+                <ViewAssistPanel
+                  settings={viewAssist}
+                  onChange={(key, value) => setViewAssist((settings) => ({ ...settings, [key]: value }))}
+                  onStub={showToast}
+                />
                 <details className="accordion-panel" open>
                   <summary>物件屬性</summary>
                   <ObjectPropertiesPanel

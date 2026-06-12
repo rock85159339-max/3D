@@ -43,8 +43,8 @@ export default function StatusBar({
       ? '框選'
       : toolLabels[mode] || mode;
   const hint = operationStyle === 'maya'
-    ? '提示：Alt + 左鍵旋轉，Alt + 中鍵平移，Alt + 右鍵縮放，F 聚焦'
-    : '提示：中鍵旋轉視角，Shift + 中鍵平移，G/R/S 切換移動/旋轉/縮放';
+    ? '提示：Alt + 左鍵旋轉，Alt + 中鍵平移，Alt + 右鍵縮放，F 聚焦，Delete 刪除，Ctrl+Z 復原'
+    : '提示：中鍵旋轉視角，Shift + 中鍵平移，G 移動，R 旋轉，S 縮放，Delete 刪除，Ctrl+Z / Ctrl+Y';
   const appName = appInfo.name === 'Print Modeler' ? '3D 列印建模器' : appInfo.name;
 
   return (
