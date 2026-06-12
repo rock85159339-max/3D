@@ -507,6 +507,96 @@ select {
   box-shadow: 0 14px 35px rgba(0, 0, 0, 0.25);
 }
 
+.quick-start-card {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  z-index: 12;
+  display: grid;
+  gap: 14px;
+  width: min(520px, calc(100% - 40px));
+  transform: translate(-50%, -50%);
+  padding: 22px;
+  border: 1px solid rgba(56, 189, 248, 0.38);
+  border-radius: 10px;
+  background: rgba(15, 23, 34, 0.94);
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(10px);
+}
+
+.quick-start-kicker {
+  color: #7dd3fc;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quick-start-card h2 {
+  margin: 4px 0 0;
+  color: #f8fafc;
+  font-size: 24px;
+}
+
+.quick-start-card ol {
+  margin: 0;
+  padding-left: 22px;
+  color: #c8d6e6;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.quick-start-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-start-actions button {
+  min-height: 38px;
+  border: 1px solid #273243;
+  border-radius: 7px;
+  color: #e0f2fe;
+  background: #111a28;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.quick-start-actions button:hover {
+  border-color: #38bdf8;
+  background: #163049;
+}
+
+.autosave-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 6, 12, 0.55);
+}
+
+.autosave-card {
+  display: grid;
+  gap: 12px;
+  width: min(460px, 100%);
+  padding: 18px;
+  border: 1px solid #38bdf8;
+  border-radius: 10px;
+  background: #101824;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46);
+}
+
+.autosave-card strong {
+  color: #f8fafc;
+  font-size: 16px;
+}
+
+.autosave-card p {
+  margin: 0;
+  color: #a9b9ca;
+  font-size: 13px;
+}
+
 .view-buttons {
   position: absolute;
   right: 12px;

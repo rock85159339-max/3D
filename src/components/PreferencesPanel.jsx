@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function PreferencesPanel({ preferences, cameraProjection, onChange, onClose, onProjectionChange }) {
+export default function PreferencesPanel({ preferences, cameraProjection, onChange, onClose, onProjectionChange, onCopyDebugInfo }) {
   return (
     <section className="preferences-panel" onClick={(event) => event.stopPropagation()}>
       <div className="panel-title-row">
@@ -51,6 +51,10 @@ export default function PreferencesPanel({ preferences, cameraProjection, onChan
       <div className="preference-footer">
         <span>相機：{cameraProjection === 'orthographic' ? '正交' : '透視'}</span>
         <button onClick={onProjectionChange}>切換透視 / 正交</button>
+      </div>
+      <div className="preference-footer">
+        <span>需要回報問題時，可先複製目前除錯資訊。</span>
+        <button onClick={onCopyDebugInfo}>複製除錯資訊</button>
       </div>
     </section>
   );

@@ -943,6 +943,8 @@ export default function App() {
   const [booleanMessage, setBooleanMessage] = useState('');
   const [toast, setToast] = useState('');
   const [historyVersion, setHistoryVersion] = useState(0);
+  const [autosavePrompt, setAutosavePrompt] = useState(null);
+  const [lastErrorMessage, setLastErrorMessage] = useState('');
 
   const printerSize = printerKey === 'custom' ? customSize : PRINTERS[printerKey].size;
   const selectedObjects = useMemo(() => objectsRef.current.filter((object) => selectedIds.includes(object.uuid)), [selectedIds, objects]);
@@ -1022,17 +1024,9 @@ export default function App() {
 
     window.setTimeout(() => {
       const saved = localStorage.getItem('printModeler.autosave');
-      if (saved && window.confirm('偵測到自動儲存的專案，要恢復嗎？')) {
-        try {
-          loadProjectData(JSON.parse(saved));
-          const time = localStorage.getItem('printModeler.autosaveTime');
-          if (time) setLastAutosave(time);
-          showToast('已恢復自動儲存');
-        } catch (error) {
-          showToast(`恢復自動儲存失敗：${error.message}`);
-        }
-      }
-      autosaveReadyRef.current = true;
+      const time = localStorage.getItem('printModeler.autosaveTime');
+      if (saved) setAutosavePrompt({ saved, time });
+      else autosaveReadyRef.current = true;
     }, 350);
 
     const onPointerDown = (event) => {
@@ -1322,6 +1316,10 @@ export default function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(''), 2500);
   }
 
+  function recordError(message) {
+    setLastErrorMessage(message || '');
+  }
+
   function getSelectedPrintObjects() {
     const selectedSet = new Set(selectedIdsRef.current);
     return objectsRef.current.filter((object) => selectedSet.has(object.uuid) && object.userData.printObject && object.visible !== false && !object.userData.locked);
@@ -1356,9 +1354,45 @@ export default function App() {
       return action();
     } catch (error) {
       console.error(`${label} failed`, error);
-      showToast(`${label} 失敗：${error.message || '未知錯誤'}`);
+      const message = `${label} 失敗：${error.message || '未知錯誤'}`;
+      recordError(message);
+      showToast(message);
       return null;
     }
+  }
+
+  function restoreAutosave() {
+    if (!autosavePrompt?.saved) {
+      autosaveReadyRef.current = true;
+      setAutosavePrompt(null);
+      return;
+    }
+    try {
+      loadProjectData(JSON.parse(autosavePrompt.saved));
+      if (autosavePrompt.time) setLastAutosave(autosavePrompt.time);
+      showToast('已恢復上次未儲存的模型');
+    } catch (error) {
+      const message = `恢復 autosave 失敗：${error.message}`;
+      recordError(message);
+      showToast(message);
+    } finally {
+      autosaveReadyRef.current = true;
+      setAutosavePrompt(null);
+    }
+  }
+
+  function ignoreAutosave() {
+    autosaveReadyRef.current = true;
+    setAutosavePrompt(null);
+    showToast('已忽略 autosave');
+  }
+
+  function clearAutosave() {
+    localStorage.removeItem('printModeler.autosave');
+    localStorage.removeItem('printModeler.autosaveTime');
+    autosaveReadyRef.current = true;
+    setAutosavePrompt(null);
+    showToast('已清除 autosave');
   }
 
   function makeProjectPayload() {
@@ -1961,6 +1995,66 @@ export default function App() {
     showToast('已建立 Boolean 測試物件');
   }
 
+  function createExampleScene() {
+    if (objectsRef.current.length && !window.confirm('目前場景已有物件，要以範例場景取代嗎？')) return;
+    pushHistory('example scene');
+    detachSelectionGroup();
+    objectsRef.current.forEach((object) => {
+      sceneRef.current.remove(object);
+      disposeObject(object);
+    });
+    objectsRef.current = [];
+
+    const cubeColor = '#38bdf8';
+    const holeColor = '#ef4444';
+    const cylinderColor = '#22c55e';
+    const textColor = '#facc15';
+    const cube = makeBox('範例方塊', { x: 42, y: 42, z: 34 }, new THREE.Color(cubeColor), { x: -32, y: 0, z: 17 });
+    markPrintObject(cube, '方塊 1', 'cube', { color: cubeColor, mode: 'solid' });
+
+    const sphere = createShape('sphere', 1, 'medium');
+    sphere.name = '挖洞球體 1';
+    sphere.position.set(-18, 0, 18);
+    sphere.scale.set(0.9, 0.9, 0.9);
+    sphere.userData.mode = 'hole';
+    sphere.userData.color = holeColor;
+    applyModeAndColor(sphere, 'hole', holeColor);
+
+    const cylinder = makeCylinder('圓柱 1', 12, 48, new THREE.Color(cylinderColor), { x: 38, y: 0, z: 24 }, 64);
+    markPrintObject(cylinder, '圓柱 1', 'cylinder', { color: cylinderColor, mode: 'solid' });
+
+    const text = createTextObject(0, { text: 'TEST', size: 14, depth: 3, align: 'center' });
+    text.name = '文字 1';
+    text.position.set(0, -52, 2);
+    text.userData.color = textColor;
+    applyModeAndColor(text, 'solid', textColor);
+
+    objectsRef.current.push(cube, sphere, cylinder, text);
+    objectsRef.current.forEach((object) => sceneRef.current.add(object));
+    objectCountRef.current += 4;
+    refreshObjects();
+    attachTransformForSelection([cube.uuid, sphere.uuid]);
+    switchWorkflow('model');
+    showToast('已建立範例場景，可以測試打洞、合併與匯出。');
+  }
+
+  async function copyDebugInfo() {
+    const info = [
+      `App version: ${APP_VERSION}`,
+      `Browser userAgent: ${navigator.userAgent}`,
+      `Object count: ${objectsRef.current.length}`,
+      `Selected count: ${selectedIdsRef.current.length}`,
+      `Last error message: ${lastErrorMessage || '無'}`,
+    ].join('\n');
+    try {
+      await navigator.clipboard.writeText(info);
+      showToast('已複製除錯資訊');
+    } catch (error) {
+      recordError(`複製除錯資訊失敗：${error.message}`);
+      showToast('複製除錯資訊失敗');
+    }
+  }
+
   function deleteSelected() {
     if (!selectedIdsRef.current.length) {
       showToast('沒有選取物件');
@@ -2372,6 +2466,7 @@ export default function App() {
       console.error('Boolean Difference failed', error);
       const message = `打洞失敗：實體 ${solids.length}、挖洞 ${holes.length}，CSG 計算失敗：${error.message}`;
       setBooleanMessage(message);
+      recordError(message);
       showToast('打洞失敗：請確認實體與挖洞物件有重疊');
     }
   }
@@ -2645,6 +2740,81 @@ export default function App() {
     if (!target) return;
     setMeshCheckResults(buildMeshCheckResults([target.object]));
     showToast('已檢查模型');
+  }
+
+  function getExportPrepTargets() {
+    const selectedSet = new Set(selectedIdsRef.current);
+    const selectedTargets = objectsRef.current.filter((object) => (
+      selectedSet.has(object.uuid)
+      && object.userData.printObject
+      && object.visible !== false
+      && !object.userData.locked
+      && object.userData.mode !== 'hole'
+    ));
+    if (selectedTargets.length) return selectedTargets;
+    if (!objectsRef.current.length) {
+      showToast('沒有可準備的物件');
+      return [];
+    }
+    if (!window.confirm('沒有選取物件，是否對全部可列印物件執行一鍵準備匯出？')) return [];
+    return objectsRef.current.filter((object) => object.userData.printObject && object.visible !== false && !object.userData.locked && object.userData.mode !== 'hole');
+  }
+
+  function bakeTransformIntoObject(object) {
+    object.updateWorldMatrix(true, true);
+    object.traverse((child) => {
+      if (!child.isMesh || !child.geometry || child.userData.helper) return;
+      child.updateWorldMatrix(true, false);
+      child.geometry.applyMatrix4(child.matrixWorld);
+      child.position.set(0, 0, 0);
+      child.rotation.set(0, 0, 0);
+      child.scale.set(1, 1, 1);
+      child.geometry.computeVertexNormals();
+      child.geometry.computeBoundingBox();
+      child.geometry.computeBoundingSphere();
+    });
+    object.position.set(0, 0, 0);
+    object.rotation.set(0, 0, 0);
+    object.scale.set(1, 1, 1);
+  }
+
+  function placeAndCenterObjectOnBed(object) {
+    const { box, center } = getObjectBounds(object);
+    object.position.x -= center.x;
+    object.position.y -= center.y;
+    object.position.z -= box.min.z;
+  }
+
+  function recalculateObjectNormals(object) {
+    getPrintableMeshes(object).forEach((mesh) => {
+      makeEditableGeometry(mesh);
+      mesh.geometry.computeVertexNormals();
+      mesh.geometry.attributes.position.needsUpdate = true;
+      if (mesh.geometry.attributes.normal) mesh.geometry.attributes.normal.needsUpdate = true;
+    });
+  }
+
+  function prepareExport() {
+    return runSafe('一鍵準備匯出', () => {
+      const targets = getExportPrepTargets();
+      if (!targets.length) return;
+      pushHistory('prepare export');
+      detachSelectionGroup();
+      targets.forEach((object) => {
+        bakeTransformIntoObject(object);
+        placeAndCenterObjectOnBed(object);
+        recalculateObjectNormals(object);
+      });
+      const results = buildMeshCheckResults(targets);
+      setMeshCheckResults(results);
+      refreshObjects();
+      attachTransformForSelection(targets.map((object) => object.uuid));
+      const hasError = results.some((item) => item.status === 'error');
+      const hasWarning = results.some((item) => item.status === 'warning');
+      if (hasError) showToast('一鍵準備完成，但模型仍有錯誤，建議先修復再匯出。');
+      else if (hasWarning) showToast('一鍵準備完成，有警告但可視情況匯出。');
+      else showToast('一鍵準備完成，模型可匯出 STL。');
+    });
   }
 
   function summarizeRepairTarget(target, lastMessage = '') {
@@ -2935,12 +3105,14 @@ export default function App() {
         const printableObjects = objectsRef.current.filter((object) => object.userData.mode !== 'hole');
         const results = buildMeshCheckResults(printableObjects);
         setMeshCheckResults(results);
-        const hasIssue = results.some((item) => item.status !== 'ok');
-        if (hasIssue && !window.confirm('模型可能有問題，仍要匯出嗎？')) {
+        const hasError = results.some((item) => item.status === 'error');
+        const hasWarning = results.some((item) => item.status === 'warning');
+        if (hasError && !window.confirm('模型檢查發現嚴重錯誤，仍要匯出 STL 嗎？')) {
           switchWorkflow('export');
           showToast('已取消匯出 STL');
           return;
         }
+        if (!hasError && hasWarning) showToast('模型有警告，仍允許匯出 STL');
       }
       const group = new THREE.Group();
       objectsRef.current.filter((object) => object.userData.mode !== 'hole').forEach((object) => group.add(object.clone(true)));
@@ -2949,7 +3121,7 @@ export default function App() {
       const data = format === 'obj' ? exporter.parse(group) : exporter.parse(group, { binary: false });
       const blob = new Blob([data], { type: format === 'obj' ? 'text/plain' : 'model/stl' });
       downloadBlob(blob, `print-model.${format}`);
-      showToast(`已匯出 ${format.toUpperCase()}`);
+      showToast(format === 'stl' ? 'STL 已匯出，可放入切片軟體。' : `已匯出 ${format.toUpperCase()}`);
     });
   }
 
@@ -3038,7 +3210,22 @@ export default function App() {
           onChange={updatePreference}
           onClose={() => setShowPreferences(false)}
           onProjectionChange={toggleProjection}
+          onCopyDebugInfo={copyDebugInfo}
         />
+      )}
+
+      {autosavePrompt && (
+        <section className="autosave-modal" onClick={(event) => event.stopPropagation()}>
+          <div className="autosave-card">
+            <strong>偵測到上次未儲存的模型，是否恢復？</strong>
+            <p>{autosavePrompt.time ? `上次自動儲存時間：${autosavePrompt.time}` : '可以恢復上一個自動儲存版本。'}</p>
+            <div className="quick-start-actions">
+              <button className="primary-action" onClick={restoreAutosave}>恢復</button>
+              <button onClick={ignoreAutosave}>忽略</button>
+              <button className="danger" onClick={clearAutosave}>清除 autosave</button>
+            </div>
+          </div>
+        </section>
       )}
 
       <LeftPanel>
@@ -3080,7 +3267,14 @@ export default function App() {
         <div ref={mountRef} className="three-viewport" />
         <ViewCube cameraProjection={cameraProjection} onView={setCameraView} onToggleProjection={toggleProjection} />
         <BoxSelectOverlay rect={boxSelectRect} mountRef={mountRef} />
-        {!objects.length && <div className="empty-scene-hint">從左側新增一個基本物件開始建模</div>}
+        {!objects.length && (
+          <QuickStartCard
+            onAddCube={() => addShape('cube')}
+            onAddSphere={() => addShape('sphere')}
+            onOpenExample={createExampleScene}
+            onLoadProject={() => fileInputRef.current?.click()}
+          />
+        )}
       </section>
 
       <RightPanel>
@@ -3229,6 +3423,8 @@ export default function App() {
           {activeWorkflow === 'export' && (
             <ExportPanel
               onCheck={checkSelectedMesh}
+              onPrepareExport={prepareExport}
+              onOpenExample={createExampleScene}
               onExportStl={() => exportModel('stl')}
               onExportObj={() => exportModel('obj')}
               onSave={saveProject}
@@ -3286,6 +3482,31 @@ function TransformFields({ title, data, onChange, step = '0.1', unit, labels = {
         </label>
       ))}
     </fieldset>
+  );
+}
+
+function QuickStartCard({ onAddCube, onAddSphere, onOpenExample, onLoadProject }) {
+  return (
+    <div className="quick-start-card">
+      <div>
+        <span className="quick-start-kicker">快速開始</span>
+        <h2>開始建立你的 3D 模型</h2>
+      </div>
+      <ol>
+        <li>從左側新增方塊、球體或圓柱</li>
+        <li>使用 G / R / S 移動、旋轉、縮放</li>
+        <li>切到「編輯形狀」推拉表面</li>
+        <li>切到「雕刻模型」用筆刷變形</li>
+        <li>用「列印修復」檢查模型</li>
+        <li>從「匯出檔案」匯出 STL</li>
+      </ol>
+      <div className="quick-start-actions">
+        <button className="primary-action" onClick={onAddCube}>新增方塊</button>
+        <button onClick={onAddSphere}>新增球體</button>
+        <button onClick={onOpenExample}>開啟範例場景</button>
+        <button onClick={onLoadProject}>載入專案 JSON</button>
+      </div>
+    </div>
   );
 }
 
@@ -3471,7 +3692,7 @@ function ObjectToolsPanel({
   );
 }
 
-function ExportPanel({ onCheck, onExportStl, onExportObj, onSave, onLoad, hasObjects, checkResults }) {
+function ExportPanel({ onCheck, onPrepareExport, onOpenExample, onExportStl, onExportObj, onSave, onLoad, hasObjects, checkResults }) {
   const hasIssue = checkResults?.some((item) => item.status !== 'ok');
   return (
     <div className="property-stack">
@@ -3488,10 +3709,13 @@ function ExportPanel({ onCheck, onExportStl, onExportObj, onSave, onLoad, hasObj
             </ol>
           </div>
           {hasIssue && <div className="notice warning-note">目前檢查結果有警告或錯誤，建議先到列印修復處理。</div>}
+          <div className="notice">一鍵準備匯出會依序套用變形、貼齊平台、置中到平台、重新計算法線並檢查模型。</div>
           <div className="prep-grid">
+            <button className="primary-action" onClick={onPrepareExport} disabled={!hasObjects}>一鍵準備匯出</button>
             <button onClick={onCheck} disabled={!hasObjects}>檢查模型</button>
             <button className="primary-action" onClick={onExportStl} disabled={!hasObjects}><Download size={14} /> 匯出 STL</button>
             <button onClick={onExportObj} disabled={!hasObjects}><Download size={14} /> 匯出 OBJ</button>
+            <button onClick={onOpenExample}>開啟範例</button>
             <button onClick={onSave}>儲存專案 JSON</button>
             <button onClick={onLoad}>載入專案 JSON</button>
           </div>
