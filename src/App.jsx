@@ -911,6 +911,7 @@ export default function App() {
   const sculptChangedRef = useRef(false);
   const isTransformDraggingRef = useRef(false);
   const isGizmoPointerDownRef = useRef(false);
+  const isMiddleMousePanningRef = useRef(false);
   const suppressNextClickSelectionRef = useRef(false);
   const transformHistorySnapshotRef = useRef(null);
   const measureActiveRef = useRef(false);
@@ -1113,6 +1114,10 @@ export default function App() {
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.enableDamping = true;
     orbit.dampingFactor = 0.08;
+    orbit.enablePan = true;
+    orbit.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    orbit.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
+    orbit.mouseButtons.RIGHT = THREE.MOUSE.PAN;
     orbit.target.set(0, 0, 25);
     orbitRef.current = orbit;
 
@@ -1192,6 +1197,11 @@ export default function App() {
     };
 
     const onPointerDown = (event) => {
+      if (event.button === 1) {
+        isMiddleMousePanningRef.current = true;
+        setOperationStatus('視角平移');
+        return;
+      }
       const rect = renderer.domElement.getBoundingClientRect();
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -1210,12 +1220,6 @@ export default function App() {
         return;
       }
 
-      if (event.button === 0 && orbit) {
-        orbit.mouseButtons.LEFT = event.shiftKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
-      }
-      if (prefsRef.current?.operationStyle === 'blender' && event.button === 1 && orbit) {
-        orbit.mouseButtons.MIDDLE = event.shiftKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
-      }
       if (event.shiftKey && (event.button === 0 || event.button === 1)) setOperationStatus('視角平移');
       else if (event.button === 0 || event.button === 1) setOperationStatus('視角旋轉');
 
@@ -1282,6 +1286,7 @@ export default function App() {
     };
 
     const onPointerMove = (event) => {
+      if (isMiddleMousePanningRef.current) return;
       const rect = renderer.domElement.getBoundingClientRect();
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -1316,6 +1321,11 @@ export default function App() {
     };
 
     const onPointerUp = (event) => {
+      if (event.button === 1) {
+        isMiddleMousePanningRef.current = false;
+        setOperationStatus('就緒');
+        return;
+      }
       if (isTransformDraggingRef.current || transform.dragging || isGizmoPointerDownRef.current || suppressNextClickSelectionRef.current) {
         event.preventDefault();
         isGizmoPointerDownRef.current = false;
@@ -1341,6 +1351,7 @@ export default function App() {
     };
 
     const onPointerLeave = () => {
+      isMiddleMousePanningRef.current = false;
       if (!isTransformDraggingRef.current && !transform.dragging) {
         isGizmoPointerDownRef.current = false;
         if (orbitRef.current) orbitRef.current.enabled = true;
@@ -1403,6 +1414,7 @@ export default function App() {
       renderer.domElement.removeEventListener('contextmenu', onContextMenu);
       isTransformDraggingRef.current = false;
       isGizmoPointerDownRef.current = false;
+      isMiddleMousePanningRef.current = false;
       suppressNextClickSelectionRef.current = false;
       orbit.enabled = true;
       clearBrushPreview();

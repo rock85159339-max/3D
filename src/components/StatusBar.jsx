@@ -24,6 +24,8 @@ export default function StatusBar({
   const modeLabels = {
     object: '物件',
     face: '面編輯',
+    edge: '邊編輯',
+    vertex: '點編輯',
     sculpt: '雕刻',
   };
   const toolLabels = {
@@ -43,8 +45,8 @@ export default function StatusBar({
       ? '框選'
       : toolLabels[mode] || mode;
   const hint = operationStyle === 'maya'
-    ? '提示：Alt + 左鍵旋轉，Alt + 中鍵平移，Alt + 右鍵縮放，F 聚焦，Delete 刪除，Ctrl+Z 復原'
-    : '提示：中鍵旋轉視角，Shift + 中鍵平移，G 移動，R 旋轉，S 縮放，Delete 刪除，Ctrl+Z / Ctrl+Y';
+    ? '提示：左鍵拖曳旋轉視角，滾輪縮放，按住滾輪拖曳平移視角，F 聚焦選取'
+    : '提示：左鍵拖曳旋轉視角，滾輪縮放，按住滾輪拖曳平移視角，G/R/S 移動/旋轉/縮放，F 聚焦';
   const appName = appInfo.name === 'Print Modeler' ? '3D 列印建模器' : appInfo.name;
 
   return (
