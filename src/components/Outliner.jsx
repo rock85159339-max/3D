@@ -1,4 +1,5 @@
 import React from 'react';
+import { Eye, EyeOff, Lock, Unlock } from 'lucide-react';
 
 export default function Outliner({ objects, selectedIds, onSelect, onRename, onToggleVisibility, onToggleLock }) {
   if (!objects.length) {
@@ -33,22 +34,26 @@ export default function Outliner({ objects, selectedIds, onSelect, onRename, onT
               {isHole ? '挖洞' : '實體'}
             </span>
             <button
+              className="outliner-icon-button"
               title={isHidden ? '顯示' : '隱藏'}
+              aria-label={isHidden ? '顯示' : '隱藏'}
               onClick={(event) => {
                 event.stopPropagation();
                 onToggleVisibility(object);
               }}
             >
-              {isHidden ? '顯示' : '隱藏'}
+              {isHidden ? <Eye size={14} /> : <EyeOff size={14} />}
             </button>
             <button
+              className="outliner-icon-button"
               title={isLocked ? '解鎖' : '鎖定'}
+              aria-label={isLocked ? '解鎖' : '鎖定'}
               onClick={(event) => {
                 event.stopPropagation();
                 onToggleLock(object);
               }}
             >
-              {isLocked ? '解鎖' : '鎖定'}
+              {isLocked ? <Unlock size={14} /> : <Lock size={14} />}
             </button>
           </div>
         );

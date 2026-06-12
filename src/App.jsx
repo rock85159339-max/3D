@@ -43,6 +43,7 @@ import InspectorCard from './components/InspectorCard.jsx';
 import InspectorRow from './components/InspectorRow.jsx';
 import InspectorEmptyState from './components/InspectorEmptyState.jsx';
 import InspectorBadge from './components/InspectorBadge.jsx';
+import QuickModifierGrid from './components/QuickModifierGrid.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { getRuntimeLabel, openTextFileDesktop, saveTextFileDesktop } from './utils/desktopFileService.js';
@@ -3188,6 +3189,44 @@ export default function App() {
     refreshObjects();
   }
 
+  function toggleSelectedVisibility() {
+    const targets = objectsRef.current.filter((object) => selectedIdsRef.current.includes(object.uuid));
+    if (!targets.length) {
+      showToast('請先選取物件');
+      return;
+    }
+    pushHistory('visibility');
+    const shouldHide = targets.some((object) => object.visible !== false);
+    targets.forEach((object) => {
+      object.visible = !shouldHide;
+    });
+    if (shouldHide) attachTransformForSelection(selectedIdsRef.current.filter((id) => {
+      const object = objectsRef.current.find((item) => item.uuid === id);
+      return object?.visible !== false;
+    }));
+    refreshObjects();
+    showToast(shouldHide ? '已隱藏選取物件' : '已顯示選取物件');
+  }
+
+  function toggleSelectedLock() {
+    const targets = objectsRef.current.filter((object) => selectedIdsRef.current.includes(object.uuid));
+    if (!targets.length) {
+      showToast('請先選取物件');
+      return;
+    }
+    pushHistory('lock');
+    const shouldLock = targets.some((object) => !object.userData.locked);
+    targets.forEach((object) => {
+      object.userData.locked = shouldLock;
+    });
+    if (shouldLock) attachTransformForSelection(selectedIdsRef.current.filter((id) => {
+      const object = objectsRef.current.find((item) => item.uuid === id);
+      return !object?.userData.locked;
+    }));
+    refreshObjects();
+    showToast(shouldLock ? '已鎖定選取物件' : '已解鎖選取物件');
+  }
+
   function updatePreference(key, value) {
     setPreferences((current) => ({ ...current, [key]: value }));
   }
@@ -4266,12 +4305,6 @@ export default function App() {
                   <InspectorRow label="顏色">
                     <input type="color" value={selected.color || '#38bdf8'} onChange={(event) => updateSelected('color', null, event.target.value)} />
                   </InspectorRow>
-                  <div className="inspector-action-grid">
-                    <button onClick={() => setSelectedMode('solid')}>設為實體</button>
-                    <button onClick={() => setSelectedMode('hole')}>設為挖洞</button>
-                    <button onClick={dropSelectedToPlate}>貼齊平台</button>
-                    <button onClick={centerSelectedOnPlate}>置中平台</button>
-                  </div>
                 </>
               )}
               {selectedObjects.length > 1 && (
@@ -4281,14 +4314,30 @@ export default function App() {
                   {toolbarSolidCount === 1 && toolbarHoleCount >= 1 && (
                     <p className="inspector-muted">可使用「套用打洞」將挖洞物件從實體中扣除。</p>
                   )}
-                  <div className="inspector-action-grid">
-                    <button onClick={groupSelected}>群組</button>
-                    <button onClick={mergeSelected} disabled={!canToolbarMerge}>合併</button>
-                    <button onClick={centerSelectedOnPlate}>置中</button>
-                    <button onClick={dropSelectedToPlate}>貼齊平台</button>
-                  </div>
                 </>
               )}
+            </InspectorCard>
+
+            <InspectorCard title="快速修改器">
+              <QuickModifierGrid
+                selectedObjects={selectedObjects}
+                onCenter={centerSelectedOnPlate}
+                onDrop={dropSelectedToPlate}
+                onSetSolid={() => setSelectedMode('solid')}
+                onSetHole={() => setSelectedMode('hole')}
+                onApplyBoolean={applyHole}
+                onMerge={mergeSelected}
+                onDuplicate={duplicateSelected}
+                onDelete={deleteSelectedWithConfirm}
+                onMirrorX={() => mirrorSelected('x')}
+                onMirrorY={() => mirrorSelected('y')}
+                onArrayDuplicate={arrayDuplicate}
+                onGroup={groupSelected}
+                onUngroup={ungroupSelected}
+                onToggleLock={toggleSelectedLock}
+                onToggleVisibility={toggleSelectedVisibility}
+                onStub={showToast}
+              />
             </InspectorCard>
           </div>
         )}

@@ -4,7 +4,7 @@ const tabLabels = {
   object: '物件',
   scene: '場景',
   print: '列印',
-  modifiers: '修改器',
+  modifiers: '進階修改器',
   history: '歷史',
 };
 
