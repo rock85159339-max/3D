@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, ChevronLeft, ChevronRight, Circle, CircleSlash, Cylinder, Download, Grid3X3, Move3D, Type } from 'lucide-react';
+import { Box, ChevronLeft, ChevronRight, Circle, Cylinder, Type } from 'lucide-react';
 import IconButton from './IconButton.jsx';
 
 const modeText = {
@@ -9,6 +9,23 @@ const modeText = {
   vertex: '點模式',
   sculpt: '雕刻模式',
 };
+
+function formatNumber(value, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '-';
+  return Number(number.toFixed(digits)).toString();
+}
+
+function VectorReadout({ label, value, digits = 2 }) {
+  return (
+    <div className="vector-readout">
+      <span>{label}</span>
+      <strong>
+        X {formatNumber(value?.x, digits)} / Y {formatNumber(value?.y, digits)} / Z {formatNumber(value?.z, digits)}
+      </strong>
+    </div>
+  );
+}
 
 export default function ContextToolShelf({
   collapsed,
@@ -23,6 +40,12 @@ export default function ContextToolShelf({
   faceSelection,
   edgeSelection,
   vertexSelection,
+  vertexOffset,
+  onVertexOffsetChange,
+  onApplyVertexOffset,
+  onResetVertexOffset,
+  onVertexNormalPush,
+  onVertexNormalPull,
   sculptSettings,
   onSculptSettingChange,
   onCenter,
@@ -38,6 +61,8 @@ export default function ContextToolShelf({
   onStub,
 }) {
   const preset = resolutionPresets[resolution] || resolutionPresets.low;
+  const hasVertex = !!vertexSelection?.mesh && vertexSelection.positionIndex != null;
+
   if (collapsed) {
     return (
       <aside className="context-tool-shelf collapsed">
@@ -84,7 +109,7 @@ export default function ContextToolShelf({
               </select>
             </label>
             <p className="resolution-hint">{preset?.hint}</p>
-            {preset && <div className="mini-readout">球體 {preset.sphere[0]}×{preset.sphere[1]} / 圓環 {preset.torus[0]}×{preset.torus[1]}</div>}
+            {preset && <div className="mini-readout">球體 {preset.sphere[0]}x{preset.sphere[1]} / 圓環 {preset.torus[0]}x{preset.torus[1]}</div>}
           </section>
 
           <section className="shelf-section">
@@ -96,7 +121,7 @@ export default function ContextToolShelf({
           </section>
 
           <section className="shelf-section">
-            <span className="section-label">Solid / Hole</span>
+            <span className="section-label">實體 / 挖洞</span>
             <button onClick={onSetSolid} disabled={!hasSelection}>轉成實體</button>
             <button onClick={onSetHole} disabled={!hasSelection}>轉成挖洞</button>
           </section>
@@ -131,11 +156,36 @@ export default function ContextToolShelf({
       {modelingMode === 'vertex' && (
         <div className="shelf-scroll">
           <section className="shelf-section">
-            <span className="section-label">點工具</span>
-            <button onClick={() => onStub('移動頂點工具下一版開放')}>移動頂點</button>
-            <button onClick={() => onStub('合併頂點工具下一版開放')}>合併頂點</button>
-            <button onClick={() => onStub('平滑頂點工具下一版開放')}>平滑頂點</button>
-            <div className="mini-readout">{vertexSelection ? `已選取頂點 #${vertexSelection.vertexIndex ?? '-'}` : '尚未選取頂點'}</div>
+            <span className="section-label">頂點編輯</span>
+            <div className="mini-readout">{hasVertex ? `目前頂點 #${vertexSelection.positionIndex}` : '尚未選取頂點'}</div>
+            {hasVertex ? (
+              <>
+                <VectorReadout label="本地座標" value={vertexSelection.localPosition} />
+                <VectorReadout label="世界座標" value={vertexSelection.worldPosition} />
+                <VectorReadout label="法線" value={vertexSelection.normal} />
+              </>
+            ) : (
+              <div className="notice">請點選模型上的頂點。此物件目前若沒有可用 geometry，將無法編輯頂點。</div>
+            )}
+            <div className="axis-input-grid">
+              {['x', 'y', 'z'].map((axis) => (
+                <label key={axis} className="field">
+                  <span>{axis.toUpperCase()} 位移 mm</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={vertexOffset?.[axis] ?? 0}
+                    onChange={(event) => onVertexOffsetChange(axis, event.target.value)}
+                    disabled={!hasVertex}
+                  />
+                </label>
+              ))}
+            </div>
+            <button className="primary-action" onClick={onApplyVertexOffset} disabled={!hasVertex}>套用位移</button>
+            <button onClick={onResetVertexOffset} disabled={!hasVertex}>重設輸入</button>
+            <button onClick={onVertexNormalPush} disabled={!hasVertex}>沿法線推出 2 mm</button>
+            <button onClick={onVertexNormalPull} disabled={!hasVertex}>沿法線拉回 2 mm</button>
+            <div className="notice">頂點編輯會直接改變模型形狀，可用 Undo 復原。</div>
           </section>
         </div>
       )}

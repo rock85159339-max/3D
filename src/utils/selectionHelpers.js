@@ -49,11 +49,24 @@ export function getClosestVertexFromIntersection(hit, THREE) {
     return !best || distance < best.distance ? { point, index, distance } : best;
   }, null);
   if (!closest) return null;
+  const vertexIndex = triangle.indices[closest.index];
+  const mesh = hit.object;
+  const localPosition = new THREE.Vector3().fromBufferAttribute(mesh.geometry.attributes.position, vertexIndex);
+  const normalAttribute = mesh.geometry.attributes.normal;
+  if (!normalAttribute) mesh.geometry.computeVertexNormals();
+  const nextNormalAttribute = mesh.geometry.attributes.normal;
+  const normal = nextNormalAttribute
+    ? new THREE.Vector3().fromBufferAttribute(nextNormalAttribute, vertexIndex).normalize()
+    : null;
   return {
-    vertexIndex: triangle.indices[closest.index],
+    vertexIndex,
+    positionIndex: vertexIndex,
+    localPosition,
+    worldPosition: closest.point.clone(),
+    normal,
     point: closest.point.clone(),
     distance: closest.distance,
     faceIndex: hit.faceIndex,
-    mesh: hit.object,
+    mesh,
   };
 }

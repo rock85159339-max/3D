@@ -64,6 +64,15 @@ import {
   getClosestVertexFromIntersection,
 } from './utils/selectionHelpers.js';
 import {
+  clampVertexOffset,
+  getMeshPositionAttribute,
+  getVertexLocalPosition,
+  getVertexNormal,
+  getVertexWorldPosition,
+  moveVertexAlongNormal,
+  moveVertexByOffset,
+} from './utils/vertexEditUtils.js';
+import {
   createEdgeHighlight,
   createVertexCloud,
   createVertexHighlight,
@@ -958,6 +967,7 @@ export default function App() {
   const [modelingMode, setModelingMode] = useState('object');
   const [edgeSelection, setEdgeSelection] = useState(null);
   const [vertexSelection, setVertexSelection] = useState(null);
+  const [vertexOffset, setVertexOffset] = useState({ x: 0, y: 0, z: 0 });
   const [viewAssist, setViewAssist] = useState({
     wireframe: false,
     vertices: false,
@@ -1942,6 +1952,43 @@ export default function App() {
     vertexHelperRef.current = helper;
   }
 
+  function makeVertexSelection(mesh, positionIndex, faceIndex = null) {
+    if (!mesh?.isMesh || positionIndex == null) return null;
+    const position = getMeshPositionAttribute(mesh);
+    if (!position || positionIndex < 0 || positionIndex >= position.count) return null;
+    const local = getVertexLocalPosition(mesh, positionIndex);
+    const world = getVertexWorldPosition(mesh, positionIndex);
+    const normal = getVertexNormal(mesh, positionIndex);
+    if (!local || !world) return null;
+    return {
+      mesh,
+      vertexIndex: positionIndex,
+      positionIndex,
+      localPosition: local,
+      worldPosition: world,
+      normal,
+      point: {
+        x: roundNumber(world.x, 2),
+        y: roundNumber(world.y, 2),
+        z: roundNumber(world.z, 2),
+      },
+      faceIndex,
+    };
+  }
+
+  function refreshVertexSelection(selection = vertexSelection) {
+    if (!selection?.mesh || selection.positionIndex == null) return null;
+    const nextSelection = makeVertexSelection(selection.mesh, selection.positionIndex, selection.faceIndex);
+    if (!nextSelection) {
+      clearVertexHelper();
+      setVertexSelection(null);
+      return null;
+    }
+    showVertexHelper({ point: nextSelection.worldPosition });
+    setVertexSelection(nextSelection);
+    return nextSelection;
+  }
+
   function ensureBrushPreview() {
     const scene = sceneRef.current;
     if (!scene) return null;
@@ -2208,7 +2255,7 @@ export default function App() {
     });
   }
 
-  function pickVertexFromPointer() {
+  function legacyPickVertexFromPointer() {
     const root = objectsRef.current.find((object) => object.uuid === selectedIdsRef.current[0]);
     if (!root) {
       showToast('請先選取一個物件');
@@ -2232,6 +2279,84 @@ export default function App() {
       },
       faceIndex: vertex.faceIndex,
     });
+  }
+
+  function pickVertexFromPointer() {
+    const root = objectsRef.current.find((object) => object.uuid === selectedIdsRef.current[0]);
+    if (!root) {
+      showToast('請先選取一個物件');
+      return;
+    }
+    const hit = raycasterRef.current.intersectObjects(getPrintableMeshes(root), false)[0];
+    const vertex = getClosestVertexFromIntersection(hit, THREE);
+    if (!vertex) {
+      clearVertexHelper();
+      setVertexSelection(null);
+      showToast('請點選模型頂點附近');
+      return;
+    }
+    const nextSelection = makeVertexSelection(vertex.mesh, vertex.positionIndex ?? vertex.vertexIndex, vertex.faceIndex);
+    if (!nextSelection) {
+      showToast('此物件目前無法編輯頂點');
+      return;
+    }
+    showVertexHelper({ point: nextSelection.worldPosition });
+    setVertexSelection(nextSelection);
+    setVertexOffset({ x: 0, y: 0, z: 0 });
+  }
+
+  function resetVertexOffset() {
+    setVertexOffset({ x: 0, y: 0, z: 0 });
+  }
+
+  function updateVertexOffset(axis, value) {
+    setVertexOffset((offset) => ({
+      ...offset,
+      [axis]: value,
+    }));
+  }
+
+  function applyVertexOffset() {
+    if (!vertexSelection?.mesh || vertexSelection.positionIndex == null) {
+      showToast('請先選取一個頂點');
+      return;
+    }
+    const offset = {
+      x: clampVertexOffset(vertexOffset.x, 50),
+      y: clampVertexOffset(vertexOffset.y, 50),
+      z: clampVertexOffset(vertexOffset.z, 50),
+    };
+    if (!offset.x && !offset.y && !offset.z) {
+      showToast('位移值為 0，沒有變更');
+      return;
+    }
+    pushHistory('vertex offset');
+    const ok = moveVertexByOffset(vertexSelection.mesh, vertexSelection.positionIndex, offset);
+    if (!ok) {
+      showToast('此物件目前無法編輯頂點');
+      return;
+    }
+    refreshObjects();
+    refreshVertexSelection(vertexSelection);
+    setSelected(primarySelected ? readTransform(primarySelected) : null);
+    showToast('已套用頂點位移');
+  }
+
+  function moveSelectedVertexAlongNormal(distance) {
+    if (!vertexSelection?.mesh || vertexSelection.positionIndex == null) {
+      showToast('請先選取一個頂點');
+      return;
+    }
+    pushHistory('vertex normal move');
+    const ok = moveVertexAlongNormal(vertexSelection.mesh, vertexSelection.positionIndex, distance);
+    if (!ok) {
+      showToast('此物件目前無法沿法線編輯');
+      return;
+    }
+    refreshObjects();
+    refreshVertexSelection(vertexSelection);
+    setSelected(primarySelected ? readTransform(primarySelected) : null);
+    showToast(distance >= 0 ? '已沿法線推出頂點' : '已沿法線拉回頂點');
   }
 
   function applySculptStroke(hit) {
@@ -3869,6 +3994,12 @@ export default function App() {
         faceSelection={faceSelection}
         edgeSelection={edgeSelection}
         vertexSelection={vertexSelection}
+        vertexOffset={vertexOffset}
+        onVertexOffsetChange={updateVertexOffset}
+        onApplyVertexOffset={applyVertexOffset}
+        onResetVertexOffset={resetVertexOffset}
+        onVertexNormalPush={() => moveSelectedVertexAlongNormal(2)}
+        onVertexNormalPull={() => moveSelectedVertexAlongNormal(-2)}
         sculptSettings={sculptSettings}
         onSculptSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
         onCenter={centerSelectedOnPlate}
