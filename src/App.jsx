@@ -19,7 +19,6 @@ import {
   RotateCw,
   Scale,
   Trash2,
-  Type,
   Wrench,
 } from 'lucide-react';
 import './styles.css';
@@ -36,7 +35,6 @@ import BoxSelectOverlay from './components/BoxSelectOverlay.jsx';
 import BeginnerModeToggle from './components/BeginnerModeToggle.jsx';
 import QuickStartCards from './components/QuickStartCards.jsx';
 import RightPanelTabs from './components/RightPanelTabs.jsx';
-import CommonToolsPanel from './components/CommonToolsPanel.jsx';
 import SelectionSizeInfo from './components/SelectionSizeInfo.jsx';
 import ModelingModeToolbar from './components/ModelingModeToolbar.jsx';
 import ModelingToolPanel from './components/ModelingToolPanel.jsx';
@@ -94,25 +92,44 @@ const SHAPES = {
 
 const RESOLUTION_PRESETS = {
   low: {
-    label: '低',
-    sphere: [32, 16],
-    cylinder: 32,
-    cone: 32,
-    torus: [48, 12],
+    label: '\u4f4e',
+    hint: '\u6548\u80fd\u4f73\uff0c\u9069\u5408\u8349\u7a3f',
+    sphere: [24, 12],
+    cylinder: 24,
+    cone: 24,
+    torus: [36, 8],
   },
   medium: {
-    label: '中',
-    sphere: [64, 32],
-    cylinder: 64,
-    cone: 64,
-    torus: [72, 18],
+    label: '\u4e2d',
+    hint: '\u4e00\u822c\u5efa\u6a21',
+    sphere: [48, 24],
+    cylinder: 48,
+    cone: 48,
+    torus: [64, 12],
   },
   high: {
-    label: '高',
+    label: '\u9ad8',
+    hint: '\u5713\u5f62\u66f4\u5e73\u6ed1',
     sphere: [96, 48],
     cylinder: 96,
     cone: 96,
-    torus: [96, 24],
+    torus: [128, 24],
+  },
+  ultra: {
+    label: '\u8d85\u9ad8',
+    hint: '\u9069\u5408\u7cbe\u7d30\u6a21\u578b',
+    sphere: [144, 72],
+    cylinder: 144,
+    cone: 144,
+    torus: [192, 32],
+  },
+  sculpt: {
+    label: '\u96d5\u523b\u7d1a',
+    hint: '\u9802\u9ede\u8f03\u591a\uff0c\u9069\u5408\u96d5\u523b\uff0c\u6548\u80fd\u8f03\u91cd',
+    sphere: [192, 96],
+    cylinder: 192,
+    cone: 192,
+    torus: [256, 48],
   },
 };
 
@@ -1129,6 +1146,9 @@ export default function App() {
       switchWorkflow('face');
     } else if (nextMode === 'sculpt') {
       setEditMode('sculpt');
+      if (['low', 'medium'].includes(shapeResolution)) {
+        showToast('雕刻建議使用高、超高或雕刻級解析度建立模型。');
+      }
       if (uiMode === 'advanced') switchWorkflow('sculpt');
       else setActiveWorkflow('model');
     } else {
@@ -1138,6 +1158,13 @@ export default function App() {
       if (nextMode === 'edge') setViewAssist((settings) => ({ ...settings, wireframe: true }));
       if (nextMode === 'vertex') setViewAssist((settings) => ({ ...settings, vertices: true }));
       transformRef.current?.detach();
+    }
+  }
+
+  function updateShapeResolution(nextResolution) {
+    setShapeResolution(nextResolution);
+    if (['ultra', 'sculpt'].includes(nextResolution)) {
+      showToast('高細分會增加頂點數，可能影響效能');
     }
   }
 
@@ -3741,7 +3768,8 @@ export default function App() {
           activeTab={leftToolTab}
           onTabChange={setLeftToolTab}
           resolution={shapeResolution}
-          onResolutionChange={setShapeResolution}
+          resolutionPresets={RESOLUTION_PRESETS}
+          onResolutionChange={updateShapeResolution}
           shapes={SHAPES}
           onAddShape={addShape}
           onAddText={addText}
@@ -3761,44 +3789,6 @@ export default function App() {
             switchWorkflow('prep');
           }}
         />
-        <div className="brand compact-brand"><span className="brand-mark">mm</span><span>工具箱</span></div>
-        <CommonToolsPanel
-          disabled={!selectedIds.length}
-          onCenter={centerSelectedOnPlate}
-          onDrop={dropSelectedToPlate}
-          onRowDuplicate={arrayDuplicate}
-          onMatrixDuplicate={matrixDuplicateStub}
-          onSetHole={() => setSelectedMode('hole')}
-          onSetSolid={() => setSelectedMode('solid')}
-        />
-        {activeWorkflow === 'model' ? (
-          <>
-            <div className="tool-section">
-              <span className="section-label">解析度</span>
-              <div className="segmented text-segmented resolution-toggle">
-                {Object.entries(RESOLUTION_PRESETS).map(([key, preset]) => (
-                  <button key={key} className={shapeResolution === key ? 'active' : ''} onClick={() => setShapeResolution(key)}>{preset.label}</button>
-                ))}
-              </div>
-            </div>
-            <div className="tool-section">
-              <span className="section-label">基本形狀</span>
-              {Object.entries(SHAPES).map(([type, shape]) => {
-                const Icon = shape.icon;
-                return <button key={type} className="tool-button primary-tool" onClick={() => addShape(type)}><Icon size={20} /><span>{shape.label}</span></button>;
-              })}
-              <button className="tool-button primary-tool" onClick={addText}><Type size={20} /><span>文字</span></button>
-            </div>
-          </>
-        ) : (
-          <div className="tool-section workflow-hint">
-            <span className="section-label">{WORKFLOW_TABS.find((tab) => tab.key === activeWorkflow)?.label} 工具</span>
-            {activeWorkflow === 'face' && <p>請在模型表面點選一個面，右側可推拉、軟編輯與平滑。</p>}
-            {activeWorkflow === 'sculpt' && <p>選擇筆刷後，在模型表面按住左鍵拖曳即可雕刻。</p>}
-            {activeWorkflow === 'prep' && <p>使用右側列印修復與網格修復工具檢查、修復與封口模型。</p>}
-            {activeWorkflow === 'export' && <p>請先 Check Mesh，再匯出 STL 進行 3D 列印。</p>}
-          </div>
-        )}
       </LeftPanel>
 
       <section className="viewport-wrap">

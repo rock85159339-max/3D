@@ -11,10 +11,19 @@ const shapeLabels = {
   cone: '圓錐',
 };
 
+const modeLabels = {
+  object: '物件',
+  face: '面',
+  edge: '邊',
+  vertex: '點',
+  sculpt: '雕刻',
+};
+
 export default function ToolboxPanel({
   activeTab,
   onTabChange,
   resolution,
+  resolutionPresets,
   onResolutionChange,
   shapes,
   onAddShape,
@@ -32,6 +41,9 @@ export default function ToolboxPanel({
   onSetAdvancedMode,
   onOpenRepairTools,
 }) {
+  const presets = resolutionPresets || {};
+  const selectedPreset = presets[resolution] || presets.low;
+
   return (
     <section className="left-toolbox-shell">
       <div className="brand compact-brand toolbox-brand">
@@ -44,18 +56,31 @@ export default function ToolboxPanel({
         {activeTab === 'create' && (
           <>
             <div className="tool-section compact-tool-section">
-              <span className="section-label">解析度</span>
-              <div className="segmented text-segmented resolution-toggle">
-                {[
-                  ['low', '低'],
-                  ['medium', '中'],
-                  ['high', '高'],
-                ].map(([key, label]) => (
-                  <button key={key} className={resolution === key ? 'active' : ''} onClick={() => onResolutionChange(key)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <label className="field resolution-select-field">
+                <span>
+                  解析度
+                  <small className="resolution-help" title="細分越高，模型越平滑，但檔案與運算會變重。">?</small>
+                </span>
+                <select value={resolution} onChange={(event) => onResolutionChange(event.target.value)}>
+                  {Object.entries(presets).map(([key, preset]) => (
+                    <option key={key} value={key}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selectedPreset && (
+                <>
+                  <p className="resolution-hint">{selectedPreset.hint}</p>
+                  <div className="resolution-details" aria-label="目前細分">
+                    <strong>目前細分</strong>
+                    <span>球體 {selectedPreset.sphere[0]}×{selectedPreset.sphere[1]}</span>
+                    <span>圓柱 {selectedPreset.cylinder}</span>
+                    <span>圓錐 {selectedPreset.cone}</span>
+                    <span>圓環 {selectedPreset.torus[0]}×{selectedPreset.torus[1]}</span>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="tool-section compact-tool-section">
@@ -93,13 +118,7 @@ export default function ToolboxPanel({
           <div className="tool-section workflow-hint">
             <span className="section-label">建模模式</span>
             <div className="left-mode-buttons">
-              {[
-                ['object', '物件'],
-                ['face', '面'],
-                ['edge', '邊'],
-                ['vertex', '點'],
-                ['sculpt', '雕刻'],
-              ].map(([key, label]) => (
+              {Object.entries(modeLabels).map(([key, label]) => (
                 <button key={key} className={modelingMode === key ? 'active' : ''} onClick={() => onModelingModeChange(key)}>
                   {label}
                 </button>

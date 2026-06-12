@@ -592,6 +592,69 @@ select {
   background: #322713;
 }
 
+.resolution-select-field {
+  gap: 6px;
+  margin: 0;
+}
+
+.resolution-select-field > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #d9e3ef;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.resolution-select-field select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #263244;
+  border-radius: 7px;
+  color: #f8fafc;
+  background: #101827;
+  font-weight: 800;
+}
+
+.resolution-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  color: #facc15;
+  background: #172033;
+  font-size: 11px;
+  cursor: help;
+}
+
+.resolution-hint {
+  margin: 2px 0 0;
+  color: #facc15;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.resolution-details {
+  display: grid;
+  gap: 3px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid #263244;
+  border-radius: 7px;
+  color: #aebed0;
+  background: #0f1722;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.resolution-details strong {
+  color: #e2e8f0;
+  font-size: 12px;
+}
+
 .workflow-hint {
   padding: 12px;
   border: 1px solid #263244;
