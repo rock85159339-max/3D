@@ -87,6 +87,7 @@ import {
   createVertexHighlight,
   createWireframeOverlay,
 } from './utils/modelingVisuals.js';
+import { updateTransformPivot } from './utils/transformPivotUtils.js';
 
 const font = new FontLoader().parse(helvetikerFont);
 const MAX_HISTORY = 50;
@@ -938,6 +939,7 @@ export default function App() {
   const cameraRef = useRef(null);
   const orbitRef = useRef(null);
   const transformRef = useRef(null);
+  const transformPivotRef = useRef(null);
   const plateRef = useRef(null);
   const selectionHelpersRef = useRef([]);
   const faceHelperRef = useRef(null);
@@ -968,6 +970,7 @@ export default function App() {
   const suppressContextMenuRef = useRef(false);
   const suppressNextClickSelectionRef = useRef(false);
   const transformHistorySnapshotRef = useRef(null);
+  const transformDragStateRef = useRef(null);
   const measureActiveRef = useRef(false);
   const boxSelectActiveRef = useRef(false);
   const boxSelectStartRef = useRef(null);
@@ -1242,19 +1245,28 @@ export default function App() {
     const transform = new TransformControls(camera, renderer.domElement);
     transform.setMode(mode);
     transform.setSpace(transformSpace);
+    const transformPivot = new THREE.Object3D();
+    transformPivot.name = 'Transform Pivot';
+    transformPivot.userData.helper = true;
+    scene.add(transformPivot);
+    transformPivotRef.current = transformPivot;
     transform.addEventListener('mouseDown', () => {
       isGizmoPointerDownRef.current = true;
       suppressNextClickSelectionRef.current = true;
       transformHistorySnapshotRef.current = makeSnapshot();
+      beginTransformPivotDrag();
       orbit.enabled = false;
       renderer.domElement.style.cursor = 'grabbing';
-      if (modeRef.current === 'scale') updateScaleFeedback(transform.object, true);
+      if (modeRef.current === 'scale') updateScaleFeedback(objectsRef.current.find((object) => selectedIdsRef.current.includes(object.uuid)), true);
       setOperationStatus(modeRef.current === 'rotate' ? '正在旋轉' : modeRef.current === 'scale' ? '正在縮放' : '正在移動');
     });
     transform.addEventListener('mouseUp', () => {
       isGizmoPointerDownRef.current = false;
       suppressNextClickSelectionRef.current = true;
-      if (!isTransformDraggingRef.current) transformHistorySnapshotRef.current = null;
+      if (!isTransformDraggingRef.current) {
+        transformHistorySnapshotRef.current = null;
+        transformDragStateRef.current = null;
+      }
       if (modeRef.current === 'scale') hideScaleFeedbackSoon();
     });
     transform.addEventListener('dragging-changed', (event) => {
@@ -1262,8 +1274,9 @@ export default function App() {
       orbit.enabled = !event.value;
       if (event.value) {
         transformHistorySnapshotRef.current ||= makeSnapshot();
+        beginTransformPivotDrag();
         renderer.domElement.style.cursor = 'grabbing';
-        if (modeRef.current === 'scale') updateScaleFeedback(transform.object, true);
+        if (modeRef.current === 'scale') updateScaleFeedback(objectsRef.current.find((object) => selectedIdsRef.current.includes(object.uuid)), true);
         setOperationStatus(modeRef.current === 'rotate' ? '正在旋轉' : modeRef.current === 'scale' ? '正在縮放' : '正在移動');
       } else {
         if (transformHistorySnapshotRef.current) {
@@ -1273,7 +1286,8 @@ export default function App() {
           transformHistorySnapshotRef.current = null;
           setHistoryVersion((version) => version + 1);
         }
-        if (selectionGroupRef.current) attachTransformForSelection([...selectedIdsRef.current]);
+        transformDragStateRef.current = null;
+        attachTransformForSelection([...selectedIdsRef.current]);
         renderer.domElement.style.cursor = '';
         if (modeRef.current === 'scale') hideScaleFeedbackSoon();
         setOperationStatus('就緒');
@@ -1287,10 +1301,12 @@ export default function App() {
     transform.addEventListener('objectChange', () => {
       const active = transform.object;
       if (!active) return;
-      if (snapRef.current && modeRef.current === 'scale') snapObjectDimensions(active);
-      selectedRef.current = active;
-      setSelected(readTransform(active));
-      if (modeRef.current === 'scale' && isTransformDraggingRef.current) updateScaleFeedback(active, true);
+      applyTransformPivotDelta();
+      const primary = objectsRef.current.find((object) => selectedIdsRef.current.includes(object.uuid)) || null;
+      selectedRef.current = primary;
+      setSelected(primary ? readTransform(primary) : null);
+      updateSelectionHelpers(objectsRef.current.filter((object) => selectedIdsRef.current.includes(object.uuid)));
+      if (modeRef.current === 'scale' && isTransformDraggingRef.current) updateScaleFeedback(primary, true);
     });
     const transformHelper = transform.getHelper();
     scene.add(transformHelper);
@@ -1703,6 +1719,7 @@ export default function App() {
     modeRef.current = mode;
     transformRef.current?.setMode(mode);
     setLockedAxis(null);
+    if (selectedIdsRef.current.length) attachTransformForSelection([...selectedIdsRef.current]);
   }, [mode]);
 
   useEffect(() => {
@@ -2610,9 +2627,77 @@ export default function App() {
     });
   }
 
+  function beginTransformPivotDrag() {
+    const pivot = transformPivotRef.current;
+    if (!pivot || transformDragStateRef.current) return;
+    const selectedItems = objectsRef.current.filter((object) => selectedIdsRef.current.includes(object.uuid) && object.visible !== false && !object.userData.locked);
+    if (!selectedItems.length) return;
+    if (selectedItems.length > 1 && ['rotate', 'scale'].includes(modeRef.current)) {
+      showToast('多選旋轉/縮放下一版開放，請先使用移動工具');
+      return;
+    }
+    transformDragStateRef.current = {
+      mode: modeRef.current,
+      pivotPosition: pivot.position.clone(),
+      pivotQuaternion: pivot.quaternion.clone(),
+      pivotScale: pivot.scale.clone(),
+      objects: selectedItems.map((object) => ({
+        object,
+        position: object.position.clone(),
+        quaternion: object.quaternion.clone(),
+        scale: object.scale.clone(),
+      })),
+    };
+  }
+
+  function applyTransformPivotDelta() {
+    const pivot = transformPivotRef.current;
+    const state = transformDragStateRef.current;
+    if (!pivot || !state) return;
+
+    if (state.mode === 'translate') {
+      const delta = pivot.position.clone().sub(state.pivotPosition);
+      state.objects.forEach(({ object, position }) => {
+        object.position.copy(position).add(delta);
+        object.updateMatrixWorld(true);
+      });
+      return;
+    }
+
+    if (state.mode === 'rotate') {
+      if (state.objects.length > 1) return;
+      const inverseStart = state.pivotQuaternion.clone().invert();
+      const deltaQuaternion = pivot.quaternion.clone().multiply(inverseStart);
+      state.objects.forEach(({ object, position, quaternion }) => {
+        const relative = position.clone().sub(state.pivotPosition).applyQuaternion(deltaQuaternion);
+        object.position.copy(state.pivotPosition).add(relative);
+        object.quaternion.copy(deltaQuaternion.clone().multiply(quaternion));
+        object.updateMatrixWorld(true);
+      });
+      return;
+    }
+
+    if (state.mode === 'scale') {
+      if (state.objects.length > 1) return;
+      const ratio = new THREE.Vector3(
+        state.pivotScale.x ? pivot.scale.x / state.pivotScale.x : 1,
+        state.pivotScale.y ? pivot.scale.y / state.pivotScale.y : 1,
+        state.pivotScale.z ? pivot.scale.z / state.pivotScale.z : 1,
+      );
+      state.objects.forEach(({ object, position, scale }) => {
+        const relative = position.clone().sub(state.pivotPosition).multiply(ratio);
+        object.position.copy(state.pivotPosition).add(relative);
+        object.scale.set(scale.x * ratio.x, scale.y * ratio.y, scale.z * ratio.z);
+        if (snapRef.current) snapObjectDimensions(object);
+        object.updateMatrixWorld(true);
+      });
+    }
+  }
+
   function attachTransformForSelection(ids) {
     const transform = transformRef.current;
     const scene = sceneRef.current;
+    const pivot = transformPivotRef.current;
     if (!transform || !scene) return;
     clearFaceHelper();
     clearEdgeHelper();
@@ -2628,36 +2713,25 @@ export default function App() {
 
     if (!selectedItems.length) {
       transform.detach();
+      if (pivot) {
+        pivot.position.set(0, 0, 0);
+        pivot.rotation.set(0, 0, 0);
+        pivot.scale.set(1, 1, 1);
+      }
       selectedRef.current = null;
       setSelected(null);
       return;
     }
 
-    if (selectedItems.length === 1) {
-      selectedRef.current = selectedItems[0];
-      if (editModeRef.current === 'object') transform.attach(selectedItems[0]);
-      else transform.detach();
-      setSelected(readTransform(selectedItems[0]));
-      return;
-    }
-
-    const box = new THREE.Box3();
-    selectedItems.forEach((object) => box.union(getObjectBounds(object).box));
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    const selectionGroup = new THREE.Group();
-    selectionGroup.name = '多選控制';
-    selectionGroup.position.copy(center);
-    selectionGroup.userData.helper = true;
-    scene.add(selectionGroup);
-    selectedItems.forEach((object) => selectionGroup.attach(object));
-    selectionGroupRef.current = selectionGroup;
-    selectedRef.current = selectionGroup;
-    if (editModeRef.current === 'object') transform.attach(selectionGroup);
+    updateTransformPivot(pivot, selectedItems);
+    selectedRef.current = selectedItems[0];
+    if (editModeRef.current === 'object' && pivot) transform.attach(pivot);
     else transform.detach();
-    setSelected(readTransform(selectionGroup));
+    if (selectedItems.length > 1 && ['rotate', 'scale'].includes(modeRef.current)) {
+      showToast('多選旋轉/縮放下一版開放，請先使用移動工具');
+    }
+    setSelected(readTransform(selectedItems[0]));
   }
-
   function updateSelection(object, additive = false) {
     if (!object) {
       attachTransformForSelection([]);
