@@ -9,7 +9,6 @@ import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
 import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import helvetikerFont from 'three/examples/fonts/helvetiker_regular.typeface.json';
-import { ADDITION, Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg';
 import {
   Box,
   Circle,
@@ -44,9 +43,13 @@ import {
   removeDegenerateFacesGeometry,
   removeLooseFacesGeometry,
 } from './utils/meshRepairUtils.js';
+import {
+  getSelectedBooleanParts,
+  runBooleanDifference,
+  validateBooleanInput,
+} from './utils/booleanUtils.js';
 
 const font = new FontLoader().parse(helvetikerFont);
-const evaluator = new Evaluator();
 const MAX_HISTORY = 50;
 const LARGE_UNDO_VERTEX_THRESHOLD = 250000;
 
@@ -745,70 +748,6 @@ function meshToMergeGeometry(mesh) {
   });
   geometry.computeVertexNormals();
   return geometry;
-}
-
-function meshToBooleanGeometry(mesh) {
-  if (!mesh?.geometry?.attributes?.position) return null;
-  mesh.updateWorldMatrix(true, false);
-  let geometry = mesh.geometry.clone();
-  geometry.applyMatrix4(mesh.matrixWorld);
-  if (geometry.index) geometry = geometry.toNonIndexed();
-  Object.keys(geometry.attributes).forEach((name) => {
-    if (!['position', 'normal', 'uv'].includes(name)) geometry.deleteAttribute(name);
-  });
-  geometry.computeVertexNormals();
-  if (!geometry.attributes.uv) {
-    const uv = new Float32Array(geometry.attributes.position.count * 2);
-    geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  }
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
-  return geometry;
-}
-
-function objectToBooleanGeometry(object) {
-  if (!object) return null;
-  object.updateMatrixWorld(true);
-  const geometries = [];
-  object.traverse((child) => {
-    if (!child.isMesh || child.userData.helper || !child.visible) return;
-    const geometry = meshToBooleanGeometry(child);
-    if (geometry) geometries.push(geometry);
-  });
-  if (!geometries.length) return null;
-  const geometry = geometries.length === 1 ? geometries[0] : mergeGeometries(geometries, false);
-  geometries.forEach((item) => {
-    if (item !== geometry) item.dispose?.();
-  });
-  if (!geometry) return null;
-  geometry.computeVertexNormals();
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
-  return geometry;
-}
-
-function geometryToBrush(geometry) {
-  const brush = new Brush(geometry);
-  brush.position.set(0, 0, 0);
-  brush.rotation.set(0, 0, 0);
-  brush.scale.set(1, 1, 1);
-  brush.updateMatrixWorld(true);
-  return brush;
-}
-
-function meshToBrush(mesh) {
-  const brush = new Brush(meshToWorldGeometry(mesh), mesh.material?.clone?.() || makeMaterial(0x38bdf8));
-  brush.updateMatrixWorld(true);
-  return brush;
-}
-
-function csgCombine(meshes, operation) {
-  if (!meshes.length) return null;
-  let result = meshToBrush(meshes[0]);
-  for (let i = 1; i < meshes.length; i += 1) {
-    result = evaluator.evaluate(result, meshToBrush(meshes[i]), operation);
-  }
-  return result;
 }
 
 function getShapeDisplayName(type) {
@@ -1996,6 +1935,23 @@ export default function App() {
     showToast('已新增 文字');
   }
 
+  function createBooleanTest() {
+    pushHistory('create boolean test');
+    detachSelectionGroup();
+    const solidColor = '#38bdf8';
+    const holeColor = '#ef4444';
+    const solid = makeBox('Boolean Test Solid', { x: 30, y: 30, z: 30 }, new THREE.Color(solidColor), { x: 0, y: 0, z: 15 });
+    markPrintObject(solid, getNextObjectName('cube'), 'cube', { color: solidColor, mode: 'solid' });
+    const hole = makeCylinder('Boolean Test Hole', 7, 48, new THREE.Color(holeColor), { x: 0, y: 0, z: 15 }, 64);
+    markPrintObject(hole, getNextObjectName('cylinder', [solid.name]), 'cylinder', { color: holeColor, mode: 'hole' });
+    objectsRef.current.push(solid, hole);
+    sceneRef.current.add(solid, hole);
+    objectCountRef.current += 2;
+    refreshObjects();
+    attachTransformForSelection([solid.uuid, hole.uuid]);
+    showToast('已建立 Boolean 測試物件');
+  }
+
   function deleteSelected() {
     if (!selectedIdsRef.current.length) {
       showToast('沒有選取物件');
@@ -2356,9 +2312,7 @@ export default function App() {
 
   function applyHole() {
     detachSelectionGroup();
-    const selected = getSelectedPrintObjects();
-    const solids = selected.filter((object) => object.userData.mode !== 'hole');
-    const holes = selected.filter((object) => object.userData.mode === 'hole');
+    const { selected, solids, holes } = getSelectedBooleanParts(objectsRef.current, selectedIdsRef.current);
 
     console.debug('[boolean]', {
       selected: selected.map((object) => ({ name: object.name, mode: object.userData.mode, type: object.type })),
@@ -2366,42 +2320,31 @@ export default function App() {
       holes: holes.map((object) => object.name),
     });
 
-    if (!solids.length) {
-      setBooleanMessage('\u8acb\u9078\u53d6 1 \u500b Solid \u7269\u4ef6\u4f5c\u70ba\u6253\u6d1e\u76ee\u6a19');
-      showToast('\u8acb\u9078\u53d6 1 \u500b Solid \u7269\u4ef6\u4f5c\u70ba\u6253\u6d1e\u76ee\u6a19');
-      return;
-    }
-    if (!holes.length) {
-      setBooleanMessage('\u8acb\u9078\u53d6\u81f3\u5c11 1 \u500b Hole \u7269\u4ef6\u4f5c\u70ba\u5207\u5272\u5de5\u5177');
-      showToast('\u8acb\u9078\u53d6\u81f3\u5c11 1 \u500b Hole \u7269\u4ef6\u4f5c\u70ba\u5207\u5272\u5de5\u5177');
+    const validation = validateBooleanInput(selected);
+    if (!validation.ok) {
+      const message = `${validation.message}（選取 ${selected.length}、Solid ${solids.length}、Hole ${holes.length}）`;
+      setBooleanMessage(message);
+      showToast(validation.message);
       return;
     }
 
     try {
-      pushHistory('boolean');
       const target = solids[0];
-      if (solids.length > 1) showToast('\u5df2\u4f7f\u7528\u7b2c\u4e00\u500b Solid \u4f5c\u70ba\u6253\u6d1e\u76ee\u6a19');
+      if (solids.length > 1) showToast('已使用第一個 Solid 作為打洞目標');
 
-      const targetGeometry = objectToBooleanGeometry(target);
-      if (!targetGeometry) throw new Error('No target geometry');
-      let resultBrush = geometryToBrush(targetGeometry);
+      const result = runBooleanDifference(target, holes);
+      if (!result.geometry) {
+        const message = `${result.message}（選取 ${selected.length}、Solid ${solids.length}、Hole ${holes.length}、重疊 ${result.overlapCount}）`;
+        setBooleanMessage(message);
+        showToast(result.message);
+        return;
+      }
 
-      holes.forEach((hole) => {
-        const holeGeometry = objectToBooleanGeometry(hole);
-        if (!holeGeometry) throw new Error('No hole geometry: ' + hole.name);
-        const holeBrush = geometryToBrush(holeGeometry);
-        resultBrush = evaluator.evaluate(resultBrush, holeBrush, SUBTRACTION);
-        holeGeometry.dispose?.();
-      });
-
-      const resultGeometry = resultBrush.geometry.clone();
-      resultGeometry.computeVertexNormals();
-      resultGeometry.computeBoundingBox();
-      resultGeometry.computeBoundingSphere();
-
-      const resultName = getNextNamedObjectName('\u6253\u6d1e\u7d50\u679c');
-      const mesh = createMeshFromGeometry(resultName, resultGeometry, target.userData.color || getPrimaryColor(target));
+      pushHistory('boolean');
+      const resultName = getNextNamedObjectName('打洞結果');
+      const mesh = createMeshFromGeometry(resultName, result.geometry, target.userData.color || getPrimaryColor(target));
       mesh.userData.mode = 'solid';
+      mesh.userData.shapeType = 'boolean';
       mesh.position.set(0, 0, 0);
       mesh.rotation.set(0, 0, 0);
       mesh.scale.set(1, 1, 1);
@@ -2413,12 +2356,14 @@ export default function App() {
       sceneRef.current.add(mesh);
       refreshObjects();
       attachTransformForSelection([mesh.uuid]);
-      setBooleanMessage('\u5e03\u6797\u6253\u6d1e\u5b8c\u6210\u3002');
-      showToast('\u5df2\u5957\u7528\u6253\u6d1e');
+      const skippedMessage = result.skipped.length ? '已略過未重疊的 Hole。' : '';
+      setBooleanMessage(`布林打洞完成。Solid ${solids.length}、Hole ${holes.length}、已使用 ${result.usedHoles.length}。${skippedMessage}`);
+      showToast(result.skipped.length ? '已略過未重疊的 Hole，已套用打洞' : '已套用打洞');
     } catch (error) {
       console.error('Boolean Difference failed', error);
-      setBooleanMessage('\u5e03\u6797\u904b\u7b97\u5931\u6557\uff1a' + error.message);
-      showToast('\u6253\u6d1e\u5931\u6557\uff1a\u8acb\u78ba\u8a8d Solid \u8207 Hole \u6709\u91cd\u758a');
+      const message = `打洞失敗：Solid ${solids.length}、Hole ${holes.length}，CSG 計算失敗：${error.message}`;
+      setBooleanMessage(message);
+      showToast(`打洞失敗：請確認 Solid 與 Hole 有重疊`);
     }
   }
 
@@ -3206,6 +3151,7 @@ export default function App() {
               arrayDuplicate={arrayDuplicate}
               groupSelected={groupSelected}
               ungroupSelected={ungroupSelected}
+              createBooleanTest={createBooleanTest}
               measureActive={measureActive}
               setMeasureActive={setMeasureActive}
               measurePoints={measurePoints}
@@ -3307,15 +3253,17 @@ function ObjectToolsPanel({
   arrayDuplicate,
   groupSelected,
   ungroupSelected,
+  createBooleanTest,
   measureActive,
   setMeasureActive,
   measurePoints,
   clearMeasure,
 }) {
   const distance = measurePoints.length === 2 ? measurePoints[0].distanceTo(measurePoints[1]) : null;
-  const solidCount = selectedObjects.filter((object) => object.userData.mode !== 'hole').length;
-  const holeCount = selectedObjects.filter((object) => object.userData.mode === 'hole').length;
-  const canGroup = selectedObjects.length >= 2;
+  const booleanSelectedObjects = selectedObjects.filter((object) => object.userData.printObject && object.visible !== false && !object.userData.locked);
+  const solidCount = booleanSelectedObjects.filter((object) => object.userData.mode !== 'hole').length;
+  const holeCount = booleanSelectedObjects.filter((object) => object.userData.mode === 'hole').length;
+  const canGroup = booleanSelectedObjects.length >= 2;
   const canMerge = solidCount >= 2;
   const canBoolean = solidCount >= 1 && holeCount >= 1;
   const canUngroup = !!primarySelected?.isGroup;
@@ -3341,6 +3289,7 @@ function ObjectToolsPanel({
         <button onClick={() => setSelectedMode('solid')} disabled={!selectedCount}>設為實體</button>
         <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount}>設為洞</button>
         <button onClick={applyHole} disabled={!canBoolean} title={canBoolean ? '\u4f7f\u7528 Hole \u7269\u4ef6\u5207\u5272 Solid' : '\u8acb\u9078\u53d6\u81f3\u5c11 1 \u500b Solid \u8207 1 \u500b Hole'}>{'\u5957\u7528\u6253\u6d1e'}</button>
+        {import.meta.env.DEV && <button onClick={createBooleanTest}>Create Boolean Test</button>}
       </div>
       <div className="notice">Measure：開啟後在模型表面點兩個點，即可量測直線距離。</div>
       {measurePoints.length > 0 && (
