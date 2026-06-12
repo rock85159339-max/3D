@@ -41,7 +41,10 @@ export default function ContextToolShelf({
   edgeSelection,
   vertexSelection,
   vertexOffset,
+  softSelection,
+  affectedVertexCount,
   onVertexOffsetChange,
+  onSoftSelectionChange,
   onApplyVertexOffset,
   onResetVertexOffset,
   onVertexNormalPush,
@@ -62,6 +65,7 @@ export default function ContextToolShelf({
 }) {
   const preset = resolutionPresets[resolution] || resolutionPresets.low;
   const hasVertex = !!vertexSelection?.mesh && vertexSelection.positionIndex != null;
+  const affectedCountLabel = affectedVertexCount == null ? '-' : affectedVertexCount;
 
   if (collapsed) {
     return (
@@ -185,7 +189,51 @@ export default function ContextToolShelf({
             <button onClick={onResetVertexOffset} disabled={!hasVertex}>重設輸入</button>
             <button onClick={onVertexNormalPush} disabled={!hasVertex}>沿法線推出 2 mm</button>
             <button onClick={onVertexNormalPull} disabled={!hasVertex}>沿法線拉回 2 mm</button>
-            <div className="notice">頂點編輯會直接改變模型形狀，可用 Undo 復原。</div>
+            <div className="soft-selection-panel">
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={!!softSelection?.enabled}
+                  onChange={(event) => onSoftSelectionChange('enabled', event.target.checked)}
+                />
+                <span>啟用軟選取</span>
+              </label>
+              <label className="field">
+                <span>影響半徑 mm</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="200"
+                  step="0.5"
+                  value={softSelection?.radius ?? 20}
+                  onChange={(event) => onSoftSelectionChange('radius', event.target.value)}
+                  disabled={!softSelection?.enabled}
+                />
+              </label>
+              <label className="field">
+                <span>衰減模式</span>
+                <select
+                  value={softSelection?.falloff ?? 'smooth'}
+                  onChange={(event) => onSoftSelectionChange('falloff', event.target.value)}
+                  disabled={!softSelection?.enabled}
+                >
+                  <option value="smooth">Smooth 平滑</option>
+                  <option value="linear">Linear 線性</option>
+                  <option value="sharp">Sharp 尖銳</option>
+                </select>
+              </label>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={!!softSelection?.preview}
+                  onChange={(event) => onSoftSelectionChange('preview', event.target.checked)}
+                  disabled={!softSelection?.enabled}
+                />
+                <span>預覽影響範圍</span>
+              </label>
+              <div className="mini-readout">受影響頂點：{softSelection?.enabled ? affectedCountLabel : hasVertex ? 1 : '-'}</div>
+            </div>
+            <div className="notice">頂點編輯會直接改變模型形狀，可用 Undo 復原。啟用軟選取後，移動頂點會平滑帶動附近頂點。</div>
           </section>
         </div>
       )}

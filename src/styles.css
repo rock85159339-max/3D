@@ -442,6 +442,30 @@ select {
   margin: 0;
 }
 
+.soft-selection-panel {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid #1f3a4d;
+  border-radius: 8px;
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.check-row input {
+  width: 14px;
+  height: 14px;
+  accent-color: #38bdf8;
+}
+
 .top-toolbar {
   grid-column: 1 / -1;
   display: flex;

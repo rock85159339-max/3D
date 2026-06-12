@@ -73,6 +73,11 @@ import {
   moveVertexByOffset,
 } from './utils/vertexEditUtils.js';
 import {
+  applySoftVertexNormalMove,
+  applySoftVertexOffset,
+  getAffectedVertexCount,
+} from './utils/softSelectionUtils.js';
+import {
   createEdgeHighlight,
   createVertexCloud,
   createVertexHighlight,
@@ -921,6 +926,7 @@ export default function App() {
   const repairHelperRef = useRef(null);
   const edgeHelperRef = useRef(null);
   const vertexHelperRef = useRef(null);
+  const softSelectionHelperRef = useRef(null);
   const viewAssistHelpersRef = useRef([]);
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
@@ -968,6 +974,12 @@ export default function App() {
   const [edgeSelection, setEdgeSelection] = useState(null);
   const [vertexSelection, setVertexSelection] = useState(null);
   const [vertexOffset, setVertexOffset] = useState({ x: 0, y: 0, z: 0 });
+  const [softSelection, setSoftSelection] = useState({
+    enabled: false,
+    radius: 20,
+    falloff: 'smooth',
+    preview: true,
+  });
   const [viewAssist, setViewAssist] = useState({
     wireframe: false,
     vertices: false,
@@ -1028,6 +1040,11 @@ export default function App() {
   const printerSize = printerKey === 'custom' ? customSize : PRINTERS[printerKey].size;
   const selectedObjects = useMemo(() => objectsRef.current.filter((object) => selectedIds.includes(object.uuid)), [selectedIds, objects]);
   const primarySelected = selectedObjects[0] || null;
+  const softSelectionAffectedCount = useMemo(() => {
+    if (!vertexSelection?.mesh || vertexSelection.positionIndex == null) return null;
+    if (!softSelection.enabled) return 1;
+    return getAffectedVertexCount(vertexSelection.mesh, vertexSelection.positionIndex, softSelection.radius);
+  }, [vertexSelection, softSelection.enabled, softSelection.radius, objects]);
   const selectedCheck = primarySelected ? printCheck(primarySelected, printerSize) : null;
   const printStats = useMemo(() => getPrintStats(objectsRef.current, printerSize), [objects, printerSize.x, printerSize.y, printerSize.z]);
   const expertMode = uiMode === 'advanced';
@@ -1144,6 +1161,7 @@ export default function App() {
     clearFaceHelper();
     clearEdgeHelper();
     clearVertexHelper();
+    clearSoftSelectionHelper();
     setEdgeSelection(null);
     setVertexSelection(null);
     if (nextMode === 'object') {
@@ -1593,6 +1611,7 @@ export default function App() {
       clearFaceHelper();
       clearEdgeHelper();
       clearVertexHelper();
+      clearSoftSelectionHelper();
       hideBrushPreview();
       endSculptStroke();
       attachTransformForSelection(selectedIdsRef.current);
@@ -1604,6 +1623,26 @@ export default function App() {
     const hit = editModeRef.current === 'sculpt' ? getSculptHit() : null;
     if (hit) updateBrushPreview(hit);
   }, [sculptSettings]);
+
+  useEffect(() => {
+    showSoftSelectionHelper(vertexSelection, softSelection);
+    return () => {
+      if (modelingMode !== 'vertex' || !softSelection.enabled || !softSelection.preview) clearSoftSelectionHelper();
+    };
+  }, [vertexSelection, softSelection.enabled, softSelection.radius, softSelection.preview, modelingMode]);
+
+  useEffect(() => {
+    if (!softSelection.enabled || !vertexSelection?.mesh) return;
+    const root = selectedObjects.find((object) => {
+      let found = false;
+      object.traverse((child) => {
+        if (child === vertexSelection.mesh) found = true;
+      });
+      return found;
+    });
+    const vertexCount = root ? countObjectVertices(root) : vertexSelection.mesh.geometry?.attributes?.position?.count || 0;
+    if (vertexCount > 100000) showToast('此模型頂點較多，軟選取可能影響效能');
+  }, [softSelection.enabled, vertexSelection?.mesh]);
 
   useEffect(() => {
     measureActiveRef.current = measureActive;
@@ -1807,6 +1846,7 @@ export default function App() {
     clearFaceHelper();
     hideBrushPreview();
     clearRepairHelper();
+    clearSoftSelectionHelper();
     objectsRef.current.forEach((object) => {
       sceneRef.current.remove(object);
       disposeObject(object);
@@ -1837,6 +1877,7 @@ export default function App() {
     clearFaceHelper();
     hideBrushPreview();
     clearRepairHelper();
+    clearSoftSelectionHelper();
     endSculptStroke();
     objectsRef.current.forEach((object) => {
       sceneRef.current.remove(object);
@@ -1932,6 +1973,40 @@ export default function App() {
     scene.remove(vertexHelperRef.current);
     disposeObject(vertexHelperRef.current);
     vertexHelperRef.current = null;
+  }
+
+  function clearSoftSelectionHelper() {
+    const scene = sceneRef.current;
+    if (!scene || !softSelectionHelperRef.current) return;
+    scene.remove(softSelectionHelperRef.current);
+    disposeObject(softSelectionHelperRef.current);
+    softSelectionHelperRef.current = null;
+  }
+
+  function showSoftSelectionHelper(selection = vertexSelection, settings = softSelection) {
+    const scene = sceneRef.current;
+    if (!scene || !selection?.worldPosition || !settings.enabled || !settings.preview || modelingMode !== 'vertex') {
+      clearSoftSelectionHelper();
+      return;
+    }
+    clearSoftSelectionHelper();
+    const radius = THREE.MathUtils.clamp(Number(settings.radius) || 20, 1, 200);
+    const geometry = new THREE.SphereGeometry(radius, 32, 16);
+    const helper = new THREE.Mesh(
+      geometry,
+      new THREE.MeshBasicMaterial({
+        color: 0x22d3ee,
+        transparent: true,
+        opacity: 0.09,
+        wireframe: true,
+        depthTest: false,
+      }),
+    );
+    helper.position.copy(selection.worldPosition);
+    helper.renderOrder = 18;
+    helper.userData.helper = true;
+    scene.add(helper);
+    softSelectionHelperRef.current = helper;
   }
 
   function showEdgeHelper(edge) {
@@ -2291,6 +2366,7 @@ export default function App() {
     const vertex = getClosestVertexFromIntersection(hit, THREE);
     if (!vertex) {
       clearVertexHelper();
+      clearSoftSelectionHelper();
       setVertexSelection(null);
       showToast('請點選模型頂點附近');
       return;
@@ -2301,6 +2377,7 @@ export default function App() {
       return;
     }
     showVertexHelper({ point: nextSelection.worldPosition });
+    showSoftSelectionHelper(nextSelection, softSelection);
     setVertexSelection(nextSelection);
     setVertexOffset({ x: 0, y: 0, z: 0 });
   }
@@ -2314,6 +2391,20 @@ export default function App() {
       ...offset,
       [axis]: value,
     }));
+  }
+
+  function updateSoftSelection(key, value) {
+    setSoftSelection((settings) => {
+      const next = { ...settings };
+      if (key === 'enabled' || key === 'preview') {
+        next[key] = Boolean(value);
+      } else if (key === 'radius') {
+        next.radius = THREE.MathUtils.clamp(Number(value) || 1, 1, 200);
+      } else if (key === 'falloff') {
+        next.falloff = value;
+      }
+      return next;
+    });
   }
 
   function applyVertexOffset() {
@@ -2331,15 +2422,18 @@ export default function App() {
       return;
     }
     pushHistory('vertex offset');
-    const ok = moveVertexByOffset(vertexSelection.mesh, vertexSelection.positionIndex, offset);
+    const ok = softSelection.enabled
+      ? applySoftVertexOffset(vertexSelection.mesh, vertexSelection.positionIndex, offset, softSelection.radius, softSelection.falloff)
+      : moveVertexByOffset(vertexSelection.mesh, vertexSelection.positionIndex, offset);
     if (!ok) {
       showToast('此物件目前無法編輯頂點');
       return;
     }
     refreshObjects();
-    refreshVertexSelection(vertexSelection);
+    const nextSelection = refreshVertexSelection(vertexSelection);
+    if (nextSelection) showSoftSelectionHelper(nextSelection, softSelection);
     setSelected(primarySelected ? readTransform(primarySelected) : null);
-    showToast('已套用頂點位移');
+    showToast(softSelection.enabled ? '已套用軟選取頂點位移' : '已套用頂點位移');
   }
 
   function moveSelectedVertexAlongNormal(distance) {
@@ -2348,13 +2442,16 @@ export default function App() {
       return;
     }
     pushHistory('vertex normal move');
-    const ok = moveVertexAlongNormal(vertexSelection.mesh, vertexSelection.positionIndex, distance);
+    const ok = softSelection.enabled
+      ? applySoftVertexNormalMove(vertexSelection.mesh, vertexSelection.positionIndex, distance, softSelection.radius, softSelection.falloff)
+      : moveVertexAlongNormal(vertexSelection.mesh, vertexSelection.positionIndex, distance);
     if (!ok) {
       showToast('此物件目前無法沿法線編輯');
       return;
     }
     refreshObjects();
-    refreshVertexSelection(vertexSelection);
+    const nextSelection = refreshVertexSelection(vertexSelection);
+    if (nextSelection) showSoftSelectionHelper(nextSelection, softSelection);
     setSelected(primarySelected ? readTransform(primarySelected) : null);
     showToast(distance >= 0 ? '已沿法線推出頂點' : '已沿法線拉回頂點');
   }
@@ -3995,7 +4092,10 @@ export default function App() {
         edgeSelection={edgeSelection}
         vertexSelection={vertexSelection}
         vertexOffset={vertexOffset}
+        softSelection={softSelection}
+        affectedVertexCount={softSelectionAffectedCount}
         onVertexOffsetChange={updateVertexOffset}
+        onSoftSelectionChange={updateSoftSelection}
         onApplyVertexOffset={applyVertexOffset}
         onResetVertexOffset={resetVertexOffset}
         onVertexNormalPush={() => moveSelectedVertexAlongNormal(2)}
