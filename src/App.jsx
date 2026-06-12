@@ -43,6 +43,7 @@ import ModelingToolPanel from './components/ModelingToolPanel.jsx';
 import ViewAssistPanel from './components/ViewAssistPanel.jsx';
 import ModeHintOverlay from './components/ModeHintOverlay.jsx';
 import ToolboxPanel from './components/ToolboxPanel.jsx';
+import ScaleFeedbackOverlay from './components/ScaleFeedbackOverlay.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { applyCameraView, applyOrbitControlStyle, focusCameraOnBox as focusCameraOnBoxUtil, toggleCameraProjectionFov } from './utils/cameraUtils.js';
@@ -924,6 +925,7 @@ export default function App() {
   const historyRef = useRef([]);
   const redoRef = useRef([]);
   const toastTimerRef = useRef(null);
+  const scaleFeedbackTimerRef = useRef(null);
   const objectCountRef = useRef(0);
   const activeWorkflowRef = useRef('model');
   const autosaveReadyRef = useRef(false);
@@ -988,6 +990,13 @@ export default function App() {
   const [historyVersion, setHistoryVersion] = useState(0);
   const [autosavePrompt, setAutosavePrompt] = useState(null);
   const [lastErrorMessage, setLastErrorMessage] = useState('');
+  const [scaleFeedback, setScaleFeedback] = useState({
+    visible: false,
+    isDragging: false,
+    scale: { x: 1, y: 1, z: 1 },
+    size: { x: 0, y: 0, z: 0 },
+    objectName: '',
+  });
 
   const printerSize = printerKey === 'custom' ? customSize : PRINTERS[printerKey].size;
   const selectedObjects = useMemo(() => objectsRef.current.filter((object) => selectedIds.includes(object.uuid)), [selectedIds, objects]);
@@ -1007,6 +1016,7 @@ export default function App() {
           y: roundNumber(printerSize.y, 1),
           z: roundNumber(printerSize.z, 1),
         },
+        scale: null,
         caption: `場景中有 ${objects.length} 個物件`,
       };
     }
@@ -1021,6 +1031,11 @@ export default function App() {
         y: roundNumber(size.y, 1),
         z: roundNumber(size.z, 1),
       },
+      scale: selectedObjects.length === 1 ? {
+        x: roundNumber(primarySelected.scale.x, 2),
+        y: roundNumber(primarySelected.scale.y, 2),
+        z: roundNumber(primarySelected.scale.z, 2),
+      } : null,
       caption: selectedObjects.length > 1 ? `已選取 ${selectedObjects.length} 個物件` : primarySelected?.name || '已選取物件',
     };
   }, [selectedObjects, objects.length, printerSize.x, printerSize.y, printerSize.z, primarySelected]);
@@ -1056,6 +1071,39 @@ export default function App() {
     if (nextWorkflow === 'face') setEditMode('face');
     else if (nextWorkflow === 'sculpt') setEditMode('sculpt');
     else setEditMode('object');
+  }
+
+  function updateScaleFeedback(target, isDragging = true) {
+    if (!target || modeRef.current !== 'scale') return;
+    const { size } = getObjectBounds(target);
+    if (scaleFeedbackTimerRef.current) {
+      window.clearTimeout(scaleFeedbackTimerRef.current);
+      scaleFeedbackTimerRef.current = null;
+    }
+    setScaleFeedback({
+      visible: true,
+      isDragging,
+      scale: {
+        x: roundNumber(target.scale.x, 2),
+        y: roundNumber(target.scale.y, 2),
+        z: roundNumber(target.scale.z, 2),
+      },
+      size: {
+        x: roundNumber(size.x, 1),
+        y: roundNumber(size.y, 1),
+        z: roundNumber(size.z, 1),
+      },
+      objectName: target.name || '選取物件',
+    });
+  }
+
+  function hideScaleFeedbackSoon() {
+    setScaleFeedback((feedback) => ({ ...feedback, isDragging: false }));
+    if (scaleFeedbackTimerRef.current) window.clearTimeout(scaleFeedbackTimerRef.current);
+    scaleFeedbackTimerRef.current = window.setTimeout(() => {
+      setScaleFeedback((feedback) => ({ ...feedback, visible: false, isDragging: false }));
+      scaleFeedbackTimerRef.current = null;
+    }, 1000);
   }
 
   useEffect(() => {
@@ -1130,12 +1178,14 @@ export default function App() {
       transformHistorySnapshotRef.current = makeSnapshot();
       orbit.enabled = false;
       renderer.domElement.style.cursor = 'grabbing';
+      if (modeRef.current === 'scale') updateScaleFeedback(transform.object, true);
       setOperationStatus(modeRef.current === 'rotate' ? '正在旋轉' : modeRef.current === 'scale' ? '正在縮放' : '正在移動');
     });
     transform.addEventListener('mouseUp', () => {
       isGizmoPointerDownRef.current = false;
       suppressNextClickSelectionRef.current = true;
       if (!isTransformDraggingRef.current) transformHistorySnapshotRef.current = null;
+      if (modeRef.current === 'scale') hideScaleFeedbackSoon();
     });
     transform.addEventListener('dragging-changed', (event) => {
       isTransformDraggingRef.current = event.value;
@@ -1143,6 +1193,7 @@ export default function App() {
       if (event.value) {
         transformHistorySnapshotRef.current ||= makeSnapshot();
         renderer.domElement.style.cursor = 'grabbing';
+        if (modeRef.current === 'scale') updateScaleFeedback(transform.object, true);
         setOperationStatus(modeRef.current === 'rotate' ? '正在旋轉' : modeRef.current === 'scale' ? '正在縮放' : '正在移動');
       } else {
         if (transformHistorySnapshotRef.current) {
@@ -1154,6 +1205,7 @@ export default function App() {
         }
         if (selectionGroupRef.current) attachTransformForSelection([...selectedIdsRef.current]);
         renderer.domElement.style.cursor = '';
+        if (modeRef.current === 'scale') hideScaleFeedbackSoon();
         setOperationStatus('就緒');
         window.setTimeout(() => {
           suppressNextClickSelectionRef.current = false;
@@ -1168,6 +1220,7 @@ export default function App() {
       if (snapRef.current && modeRef.current === 'scale') snapObjectDimensions(active);
       selectedRef.current = active;
       setSelected(readTransform(active));
+      if (modeRef.current === 'scale' && isTransformDraggingRef.current) updateScaleFeedback(active, true);
     });
     const transformHelper = transform.getHelper();
     scene.add(transformHelper);
@@ -1426,6 +1479,7 @@ export default function App() {
       renderer.dispose();
       mount.removeChild(renderer.domElement);
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+      if (scaleFeedbackTimerRef.current) window.clearTimeout(scaleFeedbackTimerRef.current);
     };
   }, []);
 
@@ -3754,6 +3808,7 @@ export default function App() {
         <div ref={mountRef} className="three-viewport" />
         <ViewCube cameraProjection={cameraProjection} onView={setCameraView} onToggleProjection={toggleProjection} />
         <BoxSelectOverlay rect={boxSelectRect} mountRef={mountRef} />
+        <ScaleFeedbackOverlay feedback={scaleFeedback} />
         <ModeHintOverlay mode={modelingMode} />
         {!objects.length && (
           <QuickStartCards
