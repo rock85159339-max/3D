@@ -886,6 +886,10 @@ export default function App() {
   const sculptActiveRef = useRef(false);
   const sculptSnapshotRef = useRef(null);
   const sculptChangedRef = useRef(false);
+  const isTransformDraggingRef = useRef(false);
+  const isGizmoPointerDownRef = useRef(false);
+  const suppressNextClickSelectionRef = useRef(false);
+  const transformHistorySnapshotRef = useRef(null);
   const measureActiveRef = useRef(false);
   const boxSelectActiveRef = useRef(false);
   const boxSelectStartRef = useRef(null);
@@ -924,6 +928,8 @@ export default function App() {
   const [contextMenu, setContextMenu] = useState(null);
   const [clipboardObject, setClipboardObject] = useState(null);
   const [lockedAxis, setLockedAxis] = useState(null);
+  const [operationStatus, setOperationStatus] = useState('就緒');
+  const [transformSpace, setTransformSpace] = useState('world');
   const [showPreferences, setShowPreferences] = useState(false);
   const [cameraProjection, setCameraProjection] = useState(() => localStorage.getItem('printModeler.cameraProjection') || 'perspective');
   const [preferences, setPreferences] = useState(() => {
@@ -997,9 +1003,44 @@ export default function App() {
 
     const transform = new TransformControls(camera, renderer.domElement);
     transform.setMode(mode);
+    transform.setSpace(transformSpace);
+    transform.addEventListener('mouseDown', () => {
+      isGizmoPointerDownRef.current = true;
+      suppressNextClickSelectionRef.current = true;
+      transformHistorySnapshotRef.current = makeSnapshot();
+      orbit.enabled = false;
+      renderer.domElement.style.cursor = 'grabbing';
+      setOperationStatus(modeRef.current === 'rotate' ? '正在旋轉' : modeRef.current === 'scale' ? '正在縮放' : '正在移動');
+    });
+    transform.addEventListener('mouseUp', () => {
+      isGizmoPointerDownRef.current = false;
+      suppressNextClickSelectionRef.current = true;
+      if (!isTransformDraggingRef.current) transformHistorySnapshotRef.current = null;
+    });
     transform.addEventListener('dragging-changed', (event) => {
-      if (event.value) pushHistory('transform');
+      isTransformDraggingRef.current = event.value;
       orbit.enabled = !event.value;
+      if (event.value) {
+        transformHistorySnapshotRef.current ||= makeSnapshot();
+        renderer.domElement.style.cursor = 'grabbing';
+        setOperationStatus(modeRef.current === 'rotate' ? '正在旋轉' : modeRef.current === 'scale' ? '正在縮放' : '正在移動');
+      } else {
+        if (transformHistorySnapshotRef.current) {
+          historyRef.current.push(transformHistorySnapshotRef.current);
+          if (historyRef.current.length > MAX_HISTORY) historyRef.current.shift();
+          redoRef.current = [];
+          transformHistorySnapshotRef.current = null;
+          setHistoryVersion((version) => version + 1);
+        }
+        if (selectionGroupRef.current) attachTransformForSelection([...selectedIdsRef.current]);
+        renderer.domElement.style.cursor = '';
+        setOperationStatus('就緒');
+        window.setTimeout(() => {
+          suppressNextClickSelectionRef.current = false;
+          isGizmoPointerDownRef.current = false;
+          if (orbitRef.current) orbitRef.current.enabled = true;
+        }, 0);
+      }
     });
     transform.addEventListener('objectChange', () => {
       const active = transform.object;
@@ -1008,7 +1049,8 @@ export default function App() {
       selectedRef.current = active;
       setSelected(readTransform(active));
     });
-    scene.add(transform.getHelper());
+    const transformHelper = transform.getHelper();
+    scene.add(transformHelper);
     transformRef.current = transform;
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x283244, 1.8));
@@ -1029,20 +1071,41 @@ export default function App() {
       else autosaveReadyRef.current = true;
     }, 350);
 
+    const isPointerOnGizmo = () => {
+      if (editModeRef.current !== 'object' || !transformHelper?.visible) return false;
+      return raycasterRef.current.intersectObject(transformHelper, true).length > 0;
+    };
+
     const onPointerDown = (event) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      setContextMenu(null);
+
+      if (isTransformDraggingRef.current || transform.dragging) return;
+
+      const pointerOnGizmo = isPointerOnGizmo();
+      if (pointerOnGizmo) {
+        isGizmoPointerDownRef.current = true;
+        suppressNextClickSelectionRef.current = true;
+        orbit.enabled = false;
+        renderer.domElement.style.cursor = 'grab';
+        setOperationStatus('準備操作變形軸');
+        return;
+      }
+
       if (event.button === 0 && orbit) {
         orbit.mouseButtons.LEFT = event.shiftKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
       }
       if (prefsRef.current?.operationStyle === 'blender' && event.button === 1 && orbit) {
         orbit.mouseButtons.MIDDLE = event.shiftKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
       }
-      if (transform.dragging) return;
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-      raycasterRef.current.setFromCamera(pointerRef.current, camera);
-      setContextMenu(null);
+      if (event.shiftKey && (event.button === 0 || event.button === 1)) setOperationStatus('視角平移');
+      else if (event.button === 0 || event.button === 1) setOperationStatus('視角旋轉');
+
       if (event.button !== 0) return;
+      if (suppressNextClickSelectionRef.current || isGizmoPointerDownRef.current) return;
       if (boxSelectActiveRef.current && event.button === 0) {
         event.preventDefault();
         event.stopPropagation();
@@ -1094,6 +1157,17 @@ export default function App() {
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      if (isTransformDraggingRef.current || transform.dragging || isGizmoPointerDownRef.current) {
+        renderer.domElement.style.cursor = 'grabbing';
+        return;
+      }
+      if (isPointerOnGizmo()) {
+        renderer.domElement.style.cursor = 'grab';
+        setOperationStatus('可拖曳變形軸');
+        return;
+      }
+      renderer.domElement.style.cursor = '';
+      if (event.buttons && (event.shiftKey || event.button === 1)) setOperationStatus('視角平移');
       if (boxSelectStartRef.current) {
         event.preventDefault();
         event.stopPropagation();
@@ -1113,6 +1187,18 @@ export default function App() {
     };
 
     const onPointerUp = (event) => {
+      if (isTransformDraggingRef.current || transform.dragging || isGizmoPointerDownRef.current || suppressNextClickSelectionRef.current) {
+        event.preventDefault();
+        isGizmoPointerDownRef.current = false;
+        setOperationStatus('就緒');
+        window.setTimeout(() => {
+          if (!isTransformDraggingRef.current && !transform.dragging) {
+            suppressNextClickSelectionRef.current = false;
+            if (orbitRef.current) orbitRef.current.enabled = true;
+          }
+        }, 0);
+        return;
+      }
       if (boxSelectStartRef.current) {
         event.preventDefault();
         event.stopPropagation();
@@ -1126,6 +1212,10 @@ export default function App() {
     };
 
     const onPointerLeave = () => {
+      if (!isTransformDraggingRef.current && !transform.dragging) {
+        isGizmoPointerDownRef.current = false;
+        if (orbitRef.current) orbitRef.current.enabled = true;
+      }
       if (editModeRef.current === 'sculpt') {
         hideBrushPreview();
         endSculptStroke();
@@ -1182,6 +1272,10 @@ export default function App() {
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
       renderer.domElement.removeEventListener('contextmenu', onContextMenu);
+      isTransformDraggingRef.current = false;
+      isGizmoPointerDownRef.current = false;
+      suppressNextClickSelectionRef.current = false;
+      orbit.enabled = true;
       clearBrushPreview();
       clearRepairHelper();
       transform.dispose();
@@ -1269,12 +1363,16 @@ export default function App() {
   }, [mode]);
 
   useEffect(() => {
+    transformRef.current?.setSpace(transformSpace);
+  }, [transformSpace]);
+
+  useEffect(() => {
     snapRef.current = snapEnabled;
     const transform = transformRef.current;
     if (!transform) return;
     transform.setTranslationSnap(snapEnabled ? Math.max(0.1, Number(prefs.snapDistance) || 1) : null);
     transform.setRotationSnap(snapEnabled ? THREE.MathUtils.degToRad(15) : null);
-    transform.setScaleSnap(null);
+    transform.setScaleSnap(snapEnabled ? 0.5 : null);
   }, [snapEnabled, preferences]);
 
   useEffect(() => {
@@ -1897,9 +1995,10 @@ export default function App() {
     if (!transform || !scene) return;
     clearFaceHelper();
     detachSelectionGroup();
-    const selectedItems = objectsRef.current.filter((object) => ids.includes(object.uuid));
-    selectedIdsRef.current = ids;
-    setSelectedIds(ids);
+    const selectedItems = objectsRef.current.filter((object) => ids.includes(object.uuid) && object.visible !== false && !object.userData.locked);
+    const safeIds = selectedItems.map((object) => object.uuid);
+    selectedIdsRef.current = safeIds;
+    setSelectedIds(safeIds);
     updateSelectionHelpers(selectedItems);
 
     if (!selectedItems.length) {
@@ -2241,7 +2340,7 @@ export default function App() {
   function setAxisLock(axis) {
     setLockedAxis((current) => {
       const next = current === axis ? null : axis;
-      showToast(next ? `Axis locked: ${next.toUpperCase()}` : 'Axis lock cleared');
+      showToast(next ? `軸向限制：${next.toUpperCase()}` : '已取消軸向限制');
       return next;
     });
   }
@@ -3171,7 +3270,7 @@ export default function App() {
         </div>
         <label className="switch-control">
           <input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />
-          <span>{snapEnabled ? '啟用吸附' : '關閉吸附'}</span>
+          <span>{snapEnabled ? `吸附：${prefs.snapDistance} mm` : '吸附：關'}</span>
         </label>
         <label className="select-field">
           <span>列印機</span>
@@ -3315,6 +3414,8 @@ export default function App() {
                     <summary>變形</summary>
                     <TransformPanel
                       selected={selected}
+                      transformSpace={transformSpace}
+                      onTransformSpaceChange={setTransformSpace}
                       onUpdate={updateSelected}
                       onApplyTransform={applySelectedTransform}
                       onDropToPlate={dropSelectedToPlate}
@@ -3444,6 +3545,8 @@ export default function App() {
         operationStyle={prefs.operationStyle}
         brushMode={sculptSettings.brushMode}
         boxSelectActive={boxSelectActive}
+        operationStatus={operationStatus}
+        transformSpace={transformSpace}
         appInfo={APP_INFO}
         version={APP_VERSION}
       />
@@ -3558,9 +3661,16 @@ function ObjectPropertiesPanel({ selected, selectedObjects, primarySelected, onU
   );
 }
 
-function TransformPanel({ selected, onUpdate, onApplyTransform, onDropToPlate, onCenterOnPlate }) {
+function TransformPanel({ selected, transformSpace, onTransformSpaceChange, onUpdate, onApplyTransform, onDropToPlate, onCenterOnPlate }) {
   return (
     <section className="printer-card transform-card">
+      <div className="tool-subgroup compact-tool">
+        <h4>座標空間</h4>
+        <div className="segmented text-segmented">
+          <button className={transformSpace === 'world' ? 'active' : ''} onClick={() => onTransformSpaceChange('world')}>世界座標</button>
+          <button className={transformSpace === 'local' ? 'active' : ''} onClick={() => onTransformSpaceChange('local')}>本地座標</button>
+        </div>
+      </div>
       <TransformFields title="位置 Position" unit="mm" data={selected.position} onChange={(axis, value) => onUpdate('position', axis, value)} />
       <TransformFields title="旋轉 Rotation" unit="deg" data={selected.rotation} onChange={(axis, value) => onUpdate('rotation', axis, value)} step="15" />
       <TransformFields title="尺寸 Size" unit="mm" data={selected.dimensions} onChange={(axis, value) => onUpdate('dimensions', axis, value)} step="1" labels={{ x: '寬 X', y: '深 Y', z: '高 Z' }} />
