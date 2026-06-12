@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, ChevronLeft, ChevronRight, Circle, Cylinder, Type } from 'lucide-react';
 import IconButton from './IconButton.jsx';
+import PlaneCutPanel from './PlaneCutPanel.jsx';
 
 const modeText = {
   object: '物件模式',
@@ -53,6 +54,13 @@ export default function ContextToolShelf({
   onSculptSettingChange,
   onCenter,
   onDrop,
+  planeCutActive,
+  planeCutSettings,
+  canPlaneCut,
+  onEnablePlaneCut,
+  onPlaneCutSettingChange,
+  onApplyPlaneCut,
+  onCancelPlaneCut,
   onRowDuplicate,
   onMatrixDuplicate,
   onSetSolid,
@@ -128,6 +136,19 @@ export default function ContextToolShelf({
             <span className="section-label">實體 / 挖洞</span>
             <button onClick={onSetSolid} disabled={!hasSelection}>轉成實體</button>
             <button onClick={onSetHole} disabled={!hasSelection}>轉成挖洞</button>
+          </section>
+
+          <section className="shelf-section">
+            <span className="section-label">切割工具</span>
+            <PlaneCutPanel
+              active={planeCutActive}
+              settings={planeCutSettings}
+              hasValidTarget={canPlaneCut}
+              onEnable={onEnablePlaneCut}
+              onChange={onPlaneCutSettingChange}
+              onApply={onApplyPlaneCut}
+              onCancel={onCancelPlaneCut}
+            />
           </section>
         </div>
       )}

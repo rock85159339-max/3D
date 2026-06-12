@@ -40,6 +40,7 @@ export default function QuickModifierGrid({
   onDelete,
   onMirrorX,
   onMirrorY,
+  onPlaneCut,
   onArrayDuplicate,
   onGroup,
   onUngroup,
@@ -54,6 +55,7 @@ export default function QuickModifierGrid({
   const holeCount = selectedObjects.filter((object) => object.userData.mode === 'hole').length;
   const primarySelected = selectedObjects[0] || null;
   const isHole = selectedCount === 1 && primarySelected?.userData.mode === 'hole';
+  const canPlaneCut = selectedCount === 1 && solidCount === 1 && holeCount === 0;
   const isLocked = selectedCount === 1 && !!primarySelected?.userData.locked;
   const isHidden = selectedCount === 1 && primarySelected?.visible === false;
   const canGroup = selectedCount >= 2;
@@ -90,6 +92,7 @@ export default function QuickModifierGrid({
       <QuickGroup title="變形">
         <QuickModifierButton icon={FlipHorizontal} label="X 鏡像" tooltip="鏡像 X：沿 X 軸鏡像" disabled={!hasSelection} onClick={onMirrorX || (() => notifyStub('X 鏡像下一版開放'))} />
         <QuickModifierButton icon={FlipVertical} label="Y 鏡像" tooltip="鏡像 Y：沿 Y 軸鏡像" disabled={!hasSelection} onClick={onMirrorY || (() => notifyStub('Y 鏡像下一版開放'))} />
+        <QuickModifierButton icon={Scissors} label="切割" tooltip="用平面切割物件" disabled={!canPlaneCut} onClick={onPlaneCut || (() => notifyStub('平面切割下一版開放'))} />
         <QuickModifierButton icon={Grid3X3} label="陣列複製" tooltip="陣列複製：依設定複製多個物件" disabled={!hasSelection} onClick={onArrayDuplicate || (() => notifyStub('陣列複製下一版開放'))} />
         <QuickModifierButton icon={Users} label="群組" tooltip="群組選取物件" disabled={!canGroup} onClick={onGroup || (() => notifyStub('群組下一版開放'))} />
         <QuickModifierButton icon={Users} label="取消群組" tooltip="取消群組" disabled={!canUngroup} onClick={onUngroup || (() => notifyStub('請先選取群組'))} />

@@ -44,6 +44,7 @@ import InspectorRow from './components/InspectorRow.jsx';
 import InspectorEmptyState from './components/InspectorEmptyState.jsx';
 import InspectorBadge from './components/InspectorBadge.jsx';
 import QuickModifierGrid from './components/QuickModifierGrid.jsx';
+import PlaneCutPanel from './components/PlaneCutPanel.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { getRuntimeLabel, openTextFileDesktop, saveTextFileDesktop } from './utils/desktopFileService.js';
@@ -89,6 +90,8 @@ import {
   createWireframeOverlay,
 } from './utils/modelingVisuals.js';
 import { updateTransformPivot } from './utils/transformPivotUtils.js';
+import { createPlaneFromAxisPosition, clipMeshByPlane, splitMeshByPlane, validatePlaneCutInput } from './utils/planeCutUtils.js';
+import { createPlaneCutPreview, updatePlaneCutPreview, removePlaneCutPreview } from './utils/planeCutVisuals.js';
 
 const font = new FontLoader().parse(helvetikerFont);
 const MAX_HISTORY = 50;
@@ -949,6 +952,7 @@ export default function App() {
   const brushPreviewRef = useRef(null);
   const measureHelperRef = useRef(null);
   const repairHelperRef = useRef(null);
+  const planeCutPreviewRef = useRef(null);
   const edgeHelperRef = useRef(null);
   const vertexHelperRef = useRef(null);
   const softSelectionHelperRef = useRef(null);
@@ -1024,7 +1028,8 @@ export default function App() {
   const [printPrepSettings, setPrintPrepSettings] = useState({ subdivideIterations: 1, smoothStrength: 0.35, smoothIterations: 2, remeshEdgeLength: 8, remeshKeepVolume: true });
   const [meshRepairSettings, setMeshRepairSettings] = useState({ tolerance: 0.01 });
   const [meshRepairResult, setMeshRepairResult] = useState(null);
-  const [planeCutSettings, setPlaneCutSettings] = useState({ axis: 'z', position: 0, keep: 'positive' });
+  const [planeCutSettings, setPlaneCutSettings] = useState({ axis: 'z', position: 0, keep: 'positive', showPreview: true });
+  const [planeCutActive, setPlaneCutActive] = useState(false);
   const [measureActive, setMeasureActive] = useState(false);
   const [measurePoints, setMeasurePoints] = useState([]);
   const [boxSelectActive, setBoxSelectActive] = useState(false);
@@ -1066,6 +1071,8 @@ export default function App() {
   const printerSize = printerKey === 'custom' ? customSize : PRINTERS[printerKey].size;
   const selectedObjects = useMemo(() => objectsRef.current.filter((object) => selectedIds.includes(object.uuid)), [selectedIds, objects]);
   const primarySelected = selectedObjects[0] || null;
+  const planeCutValidation = useMemo(() => validatePlaneCutInput(selectedObjects), [selectedObjects]);
+  const canPlaneCut = planeCutValidation.ok;
   const softSelectionAffectedCount = useMemo(() => {
     if (!vertexSelection?.mesh || vertexSelection.positionIndex == null) return null;
     if (!softSelection.enabled) return 1;
@@ -1584,6 +1591,8 @@ export default function App() {
       orbit.enabled = true;
       clearBrushPreview();
       clearRepairHelper();
+      removePlaneCutPreview(scene, planeCutPreviewRef.current);
+      planeCutPreviewRef.current = null;
       clearViewAssistHelpers();
       transform.dispose();
       orbit.dispose();
@@ -1669,6 +1678,25 @@ export default function App() {
       if (modelingMode !== 'vertex' || !softSelection.enabled || !softSelection.preview) clearSoftSelectionHelper();
     };
   }, [vertexSelection, softSelection.enabled, softSelection.radius, softSelection.preview, modelingMode]);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    if (!planeCutActive || !planeCutSettings.showPreview || !canPlaneCut) {
+      removePlaneCutPreview(scene, planeCutPreviewRef.current);
+      planeCutPreviewRef.current = null;
+      return;
+    }
+    const { size } = getObjectBounds(planeCutValidation.object);
+    const previewSize = Math.max(size.x, size.y, size.z, 20) * 1.5;
+    if (!planeCutPreviewRef.current) {
+      planeCutPreviewRef.current = createPlaneCutPreview(planeCutSettings.axis, Number(planeCutSettings.position) || 0, previewSize);
+      scene.add(planeCutPreviewRef.current);
+    } else {
+      updatePlaneCutPreview(planeCutPreviewRef.current, planeCutSettings.axis, Number(planeCutSettings.position) || 0, previewSize);
+    }
+    return undefined;
+  }, [planeCutActive, planeCutSettings.axis, planeCutSettings.position, planeCutSettings.showPreview, canPlaneCut, planeCutValidation.object, objects]);
 
   useEffect(() => {
     if (!softSelection.enabled || !vertexSelection?.mesh) return;
@@ -3588,17 +3616,60 @@ export default function App() {
     });
   }
 
+  function updatePlaneCutSetting(key, value) {
+    setPlaneCutSettings((settings) => ({ ...settings, [key]: value }));
+  }
+
+  function enablePlaneCutMode() {
+    const validation = validatePlaneCutInput(selectedObjects);
+    if (!validation.ok) {
+      showToast(validation.message);
+      return;
+    }
+    setPlaneCutActive(true);
+    setInspectorTab('object');
+    showToast('已啟用平面切割');
+  }
+
+  function cancelPlaneCutMode() {
+    setPlaneCutActive(false);
+    removePlaneCutPreview(sceneRef.current, planeCutPreviewRef.current);
+    planeCutPreviewRef.current = null;
+    showToast('已取消切割');
+  }
+
   function applyPlaneCut() {
     return runSafe('Plane Cut', () => {
-      const target = getSelectedPrintableTarget();
-      if (!target) return;
+      const validation = validatePlaneCutInput(selectedObjects);
+      if (!validation.ok) {
+        showToast(validation.message);
+        return;
+      }
+      const target = validation.object;
+      const plane = createPlaneFromAxisPosition(planeCutSettings.axis, Number(planeCutSettings.position) || 0);
+      const results = planeCutSettings.keep === 'both'
+        ? splitMeshByPlane(target, plane)
+        : [clipMeshByPlane(target, plane, planeCutSettings.keep)].filter(Boolean);
+
+      if (!results.length) {
+        showToast('切割失敗：切割平面沒有留下可用模型');
+        return;
+      }
+
       pushHistory('plane cut');
-      target.meshes.forEach((mesh) => {
-        const nextGeometry = planeCutGeometry(mesh.geometry, planeCutSettings.axis, Number(planeCutSettings.position) || 0, planeCutSettings.keep);
-        mesh.geometry.dispose();
-        mesh.geometry = nextGeometry;
+      sceneRef.current.remove(target);
+      objectsRef.current = objectsRef.current.filter((object) => object !== target);
+      results.forEach((mesh) => {
+        mesh.name = getNextNamedObjectName(mesh.name);
+        sceneRef.current.add(mesh);
+        objectsRef.current.push(mesh);
       });
-      finishPrintPrepChange(target.object, '已裁切模型，可能需要修補開口');
+      setPlaneCutActive(false);
+      removePlaneCutPreview(sceneRef.current, planeCutPreviewRef.current);
+      planeCutPreviewRef.current = null;
+      refreshObjects();
+      attachTransformForSelection(results.map((mesh) => mesh.uuid));
+      showToast(planeCutSettings.keep === 'both' ? '已完成切割，保留兩邊' : '已完成切割');
     });
   }
 
@@ -4160,6 +4231,7 @@ export default function App() {
         onSetTransformMode={setMode}
         onCenter={centerSelectedOnPlate}
         onDrop={dropSelectedToPlate}
+        onPlaneCut={enablePlaneCutMode}
         onSetSolid={() => setSelectedMode('solid')}
         onSetHole={() => setSelectedMode('hole')}
         onBoolean={applyHole}
@@ -4244,6 +4316,13 @@ export default function App() {
         onSculptSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
         onCenter={centerSelectedOnPlate}
         onDrop={dropSelectedToPlate}
+        planeCutActive={planeCutActive}
+        planeCutSettings={planeCutSettings}
+        canPlaneCut={canPlaneCut}
+        onEnablePlaneCut={enablePlaneCutMode}
+        onPlaneCutSettingChange={updatePlaneCutSetting}
+        onApplyPlaneCut={applyPlaneCut}
+        onCancelPlaneCut={cancelPlaneCutMode}
         onRowDuplicate={arrayDuplicate}
         onMatrixDuplicate={matrixDuplicateStub}
         onSetSolid={() => setSelectedMode('solid')}
@@ -4331,6 +4410,7 @@ export default function App() {
                 onDelete={deleteSelectedWithConfirm}
                 onMirrorX={() => mirrorSelected('x')}
                 onMirrorY={() => mirrorSelected('y')}
+                onPlaneCut={enablePlaneCutMode}
                 onArrayDuplicate={arrayDuplicate}
                 onGroup={groupSelected}
                 onUngroup={ungroupSelected}

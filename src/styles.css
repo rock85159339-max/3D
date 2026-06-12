@@ -1241,6 +1241,50 @@ select {
   line-height: 1.45;
 }
 
+.plane-cut-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.plane-cut-panel > button,
+.plane-cut-actions button {
+  min-height: 30px;
+  border: 1px solid #273244;
+  border-radius: 7px;
+  color: #dbeafe;
+  background: #0f1722;
+  font-weight: 800;
+}
+
+.plane-cut-panel > button.active {
+  border-color: #facc15;
+  color: #fef3c7;
+  background: rgba(250, 204, 21, 0.12);
+}
+
+.plane-cut-panel button:not(:disabled),
+.plane-cut-actions button:not(:disabled) {
+  cursor: pointer;
+}
+
+.plane-cut-panel button:disabled,
+.plane-cut-actions button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.plane-cut-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.plane-cut-actions .primary-action {
+  border-color: #2563eb;
+  background: #1d4ed8;
+  color: #fff;
+}
+
 .inspector-badge {
   display: inline-flex;
   align-items: center;

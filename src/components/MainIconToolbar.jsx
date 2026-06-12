@@ -41,6 +41,7 @@ export default function MainIconToolbar({
   onSetTransformMode,
   onCenter,
   onDrop,
+  onPlaneCut,
   onSetSolid,
   onSetHole,
   onBoolean,
@@ -75,6 +76,7 @@ export default function MainIconToolbar({
         <IconButton icon={Scale} label="縮放" shortcut="S" active={transformMode === 'scale'} onClick={() => onSetTransformMode('scale')} />
         <IconButton icon={Move3D} label="置中到平台" disabled={!hasSelection} onClick={onCenter} />
         <IconButton icon={Download} label="貼齊平台" disabled={!hasSelection} onClick={onDrop} />
+        <IconButton icon={Scissors} label="平面切割" tooltip="平面切割" disabled={!hasSelection} onClick={onPlaneCut} />
       </ToolGroup>
 
       <ToolGroup label="布林 / 組合">
