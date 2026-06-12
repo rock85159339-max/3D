@@ -39,6 +39,10 @@ import MainIconToolbar from './components/MainIconToolbar.jsx';
 import LeftVerticalToolbar from './components/LeftVerticalToolbar.jsx';
 import ContextToolShelf from './components/ContextToolShelf.jsx';
 import RightInspectorPanel from './components/RightInspectorPanel.jsx';
+import InspectorCard from './components/InspectorCard.jsx';
+import InspectorRow from './components/InspectorRow.jsx';
+import InspectorEmptyState from './components/InspectorEmptyState.jsx';
+import InspectorBadge from './components/InspectorBadge.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { getRuntimeLabel, openTextFileDesktop, saveTextFileDesktop } from './utils/desktopFileService.js';
@@ -164,6 +168,23 @@ const axes = ['x', 'y', 'z'];
 
 function roundNumber(value, digits = 2) {
   return Number(value.toFixed(digits));
+}
+
+function formatNumber(value, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '-';
+  return Number(number.toFixed(digits)).toString();
+}
+
+function formatVector(value, unit = '', digits = 2) {
+  if (!value) return '-';
+  const suffix = unit ? ` ${unit}` : '';
+  return `X ${formatNumber(value.x, digits)} / Y ${formatNumber(value.y, digits)} / Z ${formatNumber(value.z, digits)}${suffix}`;
+}
+
+function formatSize(value) {
+  if (!value) return '-';
+  return `${formatNumber(value.x, 1)} × ${formatNumber(value.y, 1)} × ${formatNumber(value.z, 1)} mm`;
 }
 
 function makeMaterial(color, mode = 'solid') {
@@ -4137,8 +4158,7 @@ export default function App() {
       <RightInspectorPanel activeTab={inspectorTab} onTabChange={setInspectorTab}>
         {inspectorTab === 'object' && (
           <div className="property-stack inspector-stack">
-            <section className="sidebar-section outliner-section inspector-card">
-              <div className="sidebar-title"><span>{'????'}</span><small>{objects.length} {'???'}</small></div>
+            <InspectorCard title="物件列表" actions={<span className="inspector-count">{objects.length} 個物件</span>}>
               <Outliner
                 objects={objects}
                 selectedIds={selectedIds}
@@ -4147,153 +4167,163 @@ export default function App() {
                 onToggleVisibility={toggleObjectVisibility}
                 onToggleLock={toggleObjectLock}
               />
-            </section>
-            <SelectionSizeInfo info={selectionSizeInfo} />
-            <details className="accordion-panel" open>
-              <summary>{'????'}</summary>
-              <ObjectPropertiesPanel
-                selected={selected}
-                selectedObjects={selectedObjects}
-                primarySelected={primarySelected}
-                onUpdate={updateSelected}
-                onSetMode={setSelectedMode}
-                onToggleVisibility={toggleObjectVisibility}
-                onToggleLock={toggleObjectLock}
-                onDelete={deleteSelectedWithConfirm}
-              />
-            </details>
-            {selected && (
-              <details className="accordion-panel" open>
-                <summary>{'?? / ??'}</summary>
-                <TransformPanel
-                  selected={selected}
-                  transformSpace={transformSpace}
-                  onTransformSpaceChange={setTransformSpace}
-                  onUpdate={updateSelected}
-                  onApplyTransform={applySelectedTransform}
-                  onDropToPlate={dropSelectedToPlate}
-                  onCenterOnPlate={centerSelectedOnPlate}
-                />
-                {selected.shapeType === 'cube' && <BevelFields selected={selected} onChange={updateSelected} />}
-                {selected.shapeType === 'text' && <TextFields selected={selected} onChange={updateSelected} />}
-              </details>
-            )}
+            </InspectorCard>
+
+            <InspectorCard title={selectedObjects.length > 1 ? '多選物件' : '選取物件'}>
+              {!selectedObjects.length && <InspectorEmptyState>請選取一個物件以編輯屬性</InspectorEmptyState>}
+              {selectedObjects.length === 1 && selected && primarySelected && (
+                <>
+                  <InspectorRow label="名稱">
+                    <input className="inspector-inline-input" value={primarySelected.name || selected.name} onChange={(event) => updateSelected('name', null, event.target.value)} />
+                  </InspectorRow>
+                  <InspectorRow label="類型">
+                    <InspectorBadge tone={primarySelected.userData.mode === 'hole' ? 'danger' : 'success'}>{primarySelected.userData.mode === 'hole' ? '挖洞' : '實體'}</InspectorBadge>
+                  </InspectorRow>
+                  <InspectorRow label="尺寸" value={formatSize(selected.dimensions)} />
+                  <InspectorRow label="位置" value={formatVector(selected.position, 'mm')} />
+                  <InspectorRow label="旋轉" value={formatVector(selected.rotation, '度')} />
+                  <InspectorRow label="縮放" value={formatVector(selected.scale, '', 2)} />
+                  <InspectorRow label="顏色">
+                    <input type="color" value={selected.color || '#38bdf8'} onChange={(event) => updateSelected('color', null, event.target.value)} />
+                  </InspectorRow>
+                  <div className="inspector-action-grid">
+                    <button onClick={() => setSelectedMode('solid')}>設為實體</button>
+                    <button onClick={() => setSelectedMode('hole')}>設為挖洞</button>
+                    <button onClick={dropSelectedToPlate}>貼齊平台</button>
+                    <button onClick={centerSelectedOnPlate}>置中平台</button>
+                  </div>
+                </>
+              )}
+              {selectedObjects.length > 1 && (
+                <>
+                  <InspectorRow label="已選取" value={`${selectedObjects.length} 個物件`} />
+                  <InspectorRow label="整體尺寸" value={formatSize(selectionSizeInfo.size)} />
+                  <div className="inspector-action-grid">
+                    <button onClick={groupSelected}>群組</button>
+                    <button onClick={mergeSelected} disabled={!canToolbarMerge}>合併</button>
+                    <button onClick={centerSelectedOnPlate}>置中</button>
+                    <button onClick={dropSelectedToPlate}>貼齊平台</button>
+                  </div>
+                </>
+              )}
+            </InspectorCard>
           </div>
         )}
 
         {inspectorTab === 'scene' && (
           <div className="property-stack inspector-stack">
-            <section className="printer-card">
-              <div className="card-title">{'????'}</div>
-              <div className="info-grid">
-                <span>{'??'}</span><strong>mm</strong>
-                <span>{'????'}</span><strong>{printerSize.x} ? {printerSize.y} ? {printerSize.z} mm</strong>
-                <span>{'????'}</span><strong>{prefs.snapDistance} mm</strong>
-              </div>
-            </section>
-            <ViewAssistPanel
-              settings={viewAssist}
-              onChange={(key, value) => setViewAssist((settings) => ({ ...settings, [key]: value }))}
-              onStub={showToast}
-            />
+            <InspectorCard title="場景資訊">
+              <InspectorRow label="單位" value="mm" />
+              <InspectorRow label="平台尺寸" value={formatSize(printerSize)} />
+              <InspectorRow label="目前列印機" value={PRINTERS[printerKey]?.label || '自訂尺寸'} />
+              <InspectorRow label="場景中物件" value={`${objects.length} 個`} />
+              <InspectorRow label="已選取" value={`${selectedIds.length} 個`} />
+            </InspectorCard>
+            <InspectorCard title="吸附設定">
+              <label className="inspector-check-row">
+                <input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />
+                <span>啟用吸附</span>
+              </label>
+              <InspectorRow label="吸附距離" value={`${prefs.snapDistance} mm`} />
+            </InspectorCard>
+            <InspectorCard title="檢視輔助">
+              {[
+                ['wireframe', '顯示線框'],
+                ['vertices', '顯示頂點'],
+                ['faceNormals', '顯示面法線', '尚未開放'],
+                ['boundingBox', '顯示包圍盒'],
+                ['dimensions', '顯示尺寸標註', '尚未開放'],
+              ].map(([key, label, badge]) => (
+                <label className="inspector-check-row" key={key}>
+                  <input type="checkbox" checked={!!viewAssist[key]} onChange={(event) => setViewAssist((settings) => ({ ...settings, [key]: event.target.checked }))} />
+                  <span>{label}</span>
+                  {badge && <InspectorBadge>{badge}</InspectorBadge>}
+                </label>
+              ))}
+            </InspectorCard>
           </div>
         )}
 
         {inspectorTab === 'print' && (
           <div className="property-stack inspector-stack">
-            <BasicPrintCheckPanel check={basicPrintCheck} selectedCheck={selectedCheck} stats={printStats} />
-            <PrintCheckPanel check={selectedCheck} stats={printStats} />
-            <section className="printer-card">
-              <div className="card-title">{'????'}</div>
-              <div className="notice">{'????????????'}</div>
-            </section>
+            <InspectorCard title="列印平台">
+              <InspectorRow label="目前平台尺寸" value={formatSize(printerSize)} />
+              <InspectorRow label="是否超出平台">
+                <InspectorBadge tone={basicPrintCheck.outside ? 'warning' : 'success'}>{basicPrintCheck.outside ? '超出' : '正常'}</InspectorBadge>
+              </InspectorRow>
+              <InspectorRow label="是否貼齊平台">
+                <InspectorBadge tone={selectedCheck?.floating ? 'warning' : selectedObjects.length ? 'success' : 'neutral'}>{selectedObjects.length ? (selectedCheck?.floating ? '未貼齊' : '已貼齊') : '尚未檢查'}</InspectorBadge>
+              </InspectorRow>
+              <InspectorRow label="是否有物件懸空">
+                <InspectorBadge tone={basicPrintCheck.floating ? 'warning' : selectedObjects.length ? 'success' : 'neutral'}>{selectedObjects.length ? (basicPrintCheck.floating ? '警告' : '正常') : '尚未檢查'}</InspectorBadge>
+              </InspectorRow>
+              <InspectorRow label="是否需要支撐"><InspectorBadge>下一版開放</InspectorBadge></InspectorRow>
+            </InspectorCard>
+            <InspectorCard title="模型檢查">
+              <InspectorRow label="破面檢查"><InspectorBadge>下一版開放</InspectorBadge></InspectorRow>
+              <InspectorRow label="非流形邊"><InspectorBadge>下一版開放</InspectorBadge></InspectorRow>
+              <InspectorRow label="法線方向" value="可使用修改器中的修正法線" />
+            </InspectorCard>
+            <InspectorCard title="建議">
+              <p className="inspector-muted">{objects.length ? '匯出前建議執行列印檢查與貼齊平台。' : '請先建立或匯入模型。'}</p>
+            </InspectorCard>
           </div>
         )}
 
         {inspectorTab === 'modifiers' && (
           <div className="property-stack inspector-stack">
-            <details className="accordion-panel" open>
-              <summary>{'Boolean / ??'}</summary>
-              <ObjectToolsPanel
-                mode={mode}
-                setMode={setMode}
-                multiSelect={multiSelect}
-                setMultiSelect={setMultiSelect}
-                selectedCount={selectedIds.length}
-                selectedObjects={selectedObjects}
-                primarySelected={primarySelected}
-                duplicateSelected={duplicateSelected}
-                deleteSelected={deleteSelectedWithConfirm}
-                centerSelectedOnPlate={centerSelectedOnPlate}
-                dropSelectedToPlate={dropSelectedToPlate}
-                setSelectedMode={setSelectedMode}
-                mergeSelected={mergeSelected}
-                applyHole={applyHole}
-                mirrorSelected={mirrorSelected}
-                alignSelected={alignSelected}
-                arraySettings={arraySettings}
-                setArraySettings={setArraySettings}
-                arrayDuplicate={arrayDuplicate}
-                groupSelected={groupSelected}
-                ungroupSelected={ungroupSelected}
-                createBooleanTest={createBooleanTest}
-                measureActive={measureActive}
-                setMeasureActive={setMeasureActive}
-                measurePoints={measurePoints}
-                clearMeasure={() => {
-                  setMeasurePoints([]);
-                  clearMeasureHelper();
-                }}
-              />
+            <InspectorCard title="物件工具">
+              <div className="inspector-action-grid">
+                <button onClick={centerSelectedOnPlate} disabled={!selectedIds.length}>置中到平台</button>
+                <button onClick={dropSelectedToPlate} disabled={!selectedIds.length}>貼齊平台</button>
+                <button onClick={() => mirrorSelected('x')} disabled={!selectedIds.length}>鏡像 X</button>
+                <button onClick={() => mirrorSelected('y')} disabled={!selectedIds.length}>鏡像 Y</button>
+                <button onClick={() => mirrorSelected('z')} disabled={!selectedIds.length}>鏡像 Z</button>
+                <button onClick={arrayDuplicate} disabled={!selectedIds.length}>陣列複製</button>
+              </div>
+            </InspectorCard>
+            <InspectorCard title="布林 / 組合">
+              <p className="inspector-muted">挖洞物件會以半透明紅色顯示，套用打洞後會從實體中扣除。</p>
+              <div className="inspector-action-grid">
+                <button onClick={mergeSelected} disabled={!canToolbarMerge}>合併</button>
+                <button className="primary-action" onClick={applyHole} disabled={!canToolbarBoolean}>套用打洞</button>
+                <button onClick={() => setSelectedMode('solid')} disabled={!selectedIds.length}>設為實體</button>
+                <button onClick={() => setSelectedMode('hole')} disabled={!selectedIds.length}>設為挖洞</button>
+              </div>
               {booleanMessage && <div className="notice">{booleanMessage}</div>}
-            </details>
-            {expertMode ? (
-              <PrintPrepPanel
-                settings={printPrepSettings}
-                onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
-                onSubdivide={subdivideSelectedModel}
-                onSmooth={smoothSelectedModel}
-                onRecalculate={recalculateSelectedNormals}
-                onRemesh={remeshSelectedModel}
-                onPlace={placeSelectedOnBed}
-                onCenter={centerSelectedOnBed}
-                onApplyTransform={applySelectedTransform}
-                onCheck={checkSelectedMesh}
-                planeCutSettings={planeCutSettings}
-                onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
-                onPlaneCut={applyPlaneCut}
-                repairSettings={meshRepairSettings}
-                onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
-                onFindHoles={findSelectedHoles}
-                onFillHoles={fillSelectedHoles}
-                onMergeCloseVertices={mergeSelectedCloseVertices}
-                onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
-                onRemoveLooseFaces={removeSelectedLooseFaces}
-                onAutoRepair={autoRepairSelectedMesh}
-                repairResult={meshRepairResult}
-                results={meshCheckResults}
-                disabled={!primarySelected}
-              />
-            ) : (
-              <section className="printer-card">
-                <div className="card-title">{'?????'}</div>
-                <div className="notice">{'Remesh??????????????????????'}</div>
-              </section>
-            )}
+            </InspectorCard>
+            <InspectorCard title="網格修復">
+              {expertMode ? (
+                <div className="inspector-action-grid">
+                  <button onClick={remeshSelectedModel} disabled={!primarySelected}>重新整理網格</button>
+                  <button onClick={smoothSelectedModel} disabled={!primarySelected}>平滑模型</button>
+                  <button onClick={subdivideSelectedModel} disabled={!primarySelected}>重建網格</button>
+                  <button onClick={recalculateSelectedNormals} disabled={!primarySelected}>修正法線</button>
+                  <button onClick={removeSelectedDegenerateFaces} disabled={!primarySelected}>移除破面</button>
+                </div>
+              ) : (
+                <p className="inspector-muted">切換到進階模式後可使用完整網格修復工具。</p>
+              )}
+            </InspectorCard>
           </div>
         )}
 
         {inspectorTab === 'history' && (
           <div className="property-stack inspector-stack">
-            <section className="printer-card">
-              <div className="card-title">{'????'}</div>
-              <div className="info-grid">
-                <span>{'Undo'}</span><strong>{historyRef.current.length ? '??' : '?'}</strong>
-                <span>{'Redo'}</span><strong>{redoRef.current.length ? '??' : '?'}</strong>
-                <span>{'????'}</span><strong>{selectedIds.length}</strong>
+            <InspectorCard title="復原狀態">
+              <InspectorRow label="可復原" value={historyRef.current.length ? '是' : '否'} />
+              <InspectorRow label="可重做" value={redoRef.current.length ? '是' : '否'} />
+              <InspectorRow label="目前歷史步數" value={historyRef.current.length} />
+            </InspectorCard>
+            <InspectorCard title="操作">
+              <div className="inspector-action-grid">
+                <button onClick={undo} disabled={!historyRef.current.length}>復原 Undo</button>
+                <button onClick={redo} disabled={!redoRef.current.length}>重做 Redo</button>
               </div>
-              <div className="notice">{'??????????????????? / ???'}</div>
-            </section>
+            </InspectorCard>
+            <InspectorCard title="提示">
+              <p className="inspector-muted">完整歷史列表尚未開放，目前可使用 Undo / Redo 回到上一步。</p>
+            </InspectorCard>
           </div>
         )}
       </RightInspectorPanel>
