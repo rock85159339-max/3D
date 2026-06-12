@@ -23,10 +23,12 @@ export function getSelectedBooleanParts(sceneObjects, selectedIds) {
   const selected = sceneObjects.filter((object) => (
     selectedSet.has(object.uuid)
     && object.userData.printObject
+    && !object.userData.helper
     && object.visible !== false
     && !object.userData.locked
+    && (object.isMesh || object.isGroup)
   ));
-  const solids = selected.filter((object) => object.userData.mode !== 'hole');
+  const solids = selected.filter((object) => (object.userData.mode || 'solid') === 'solid');
   const holes = selected.filter((object) => object.userData.mode === 'hole');
   return { selected, solids, holes };
 }
@@ -82,14 +84,18 @@ export function objectToWorldGeometry(object) {
 }
 
 export function validateBooleanInput(selectedObjects) {
-  const solids = selectedObjects.filter((object) => object.userData.mode !== 'hole');
-  const holes = selectedObjects.filter((object) => object.userData.mode === 'hole');
+  const valid = selectedObjects.filter((object) => object?.userData?.printObject && !object.userData.helper && (object.isMesh || object.isGroup));
+  const solids = valid.filter((object) => (object.userData.mode || 'solid') === 'solid');
+  const holes = valid.filter((object) => object.userData.mode === 'hole');
 
   if (!solids.length) {
-    return { ok: false, solids, holes, message: '請選取 1 個實體物件作為打洞目標' };
+    return { ok: false, solids, holes, message: '請選取一個實體物件' };
   }
   if (!holes.length) {
-    return { ok: false, solids, holes, message: '請選取至少 1 個挖洞物件作為切割工具' };
+    return { ok: false, solids, holes, message: '請選取至少一個挖洞物件' };
+  }
+  if (solids.length > 1) {
+    return { ok: false, solids, holes, message: '請一次只選取一個實體主體' };
   }
   return { ok: true, solids, holes, message: '' };
 }
@@ -111,7 +117,7 @@ export function runBooleanDifference(targetObject, holeObjects) {
 
     const box = getGeometryBox(geometry);
     if (!targetBox.intersectsBox(box)) {
-      skipped.push({ object: hole, reason: '未與實體重疊' });
+      skipped.push({ object: hole, reason: '未與實體相交' });
       geometry.dispose?.();
       return;
     }
@@ -126,7 +132,7 @@ export function runBooleanDifference(targetObject, holeObjects) {
       skipped,
       usedHoles: [],
       overlapCount: 0,
-      message: '挖洞物件沒有與實體重疊，無法打洞',
+      message: '挖洞物件沒有與實體相交',
     };
   }
 

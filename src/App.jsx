@@ -212,6 +212,7 @@ function getPrimaryColor(object) {
 function applyModeAndColor(object, mode = object.userData.mode || 'solid', color = object.userData.color || '#38bdf8') {
   object.userData.mode = mode;
   object.userData.color = color;
+  object.userData.printObject = true;
   object.traverse((child) => {
     if (!child.isMesh || child.userData.helper) return;
     child.material?.dispose?.();
@@ -1780,14 +1781,14 @@ export default function App() {
 
   function getSelectedPrintObjects() {
     const selectedSet = new Set(selectedIdsRef.current);
-    return objectsRef.current.filter((object) => selectedSet.has(object.uuid) && object.userData.printObject && object.visible !== false && !object.userData.locked);
+    return objectsRef.current.filter((object) => selectedSet.has(object.uuid) && object.userData.printObject && !object.userData.helper && object.visible !== false && !object.userData.locked);
   }
 
   function getSelectedSolidsAndHoles() {
     const selectedItems = getSelectedPrintObjects();
     return {
       selectedItems,
-      solids: selectedItems.filter((object) => object.userData.mode !== 'hole'),
+      solids: selectedItems.filter((object) => (object.userData.mode || 'solid') === 'solid'),
       holes: selectedItems.filter((object) => object.userData.mode === 'hole'),
     };
   }
@@ -3243,9 +3244,13 @@ export default function App() {
   function mergeSelected() {
     return runSafe('Merge', () => {
       detachSelectionGroup();
-      const { solids } = getSelectedSolidsAndHoles();
+      const { solids, holes } = getSelectedSolidsAndHoles();
+      if (holes.length) {
+        showToast('挖洞物件請使用「套用打洞」，不是合併');
+        return;
+      }
       if (solids.length < 2) {
-        showToast('請至少選取 2 個實體物件才能合併');
+        showToast('請選取至少兩個實體物件');
         return;
       }
       const meshes = solids.flatMap((object) => {
@@ -3270,7 +3275,7 @@ export default function App() {
       sceneRef.current.add(merged);
       refreshObjects();
       attachTransformForSelection([merged.uuid]);
-      showToast('已合併 ' + solids.length + ' 個物件');
+      showToast('已合併 ' + solids.length + ' 個實體物件');
     });
   }
 
@@ -3286,49 +3291,50 @@ export default function App() {
 
     const validation = validateBooleanInput(selected);
     if (!validation.ok) {
-      const message = `${validation.message}（選取 ${selected.length}、實體 ${solids.length}、挖洞 ${holes.length}）`;
+      const message = `${validation.message}（選取 ${selected.length}、實體 ${validation.solids.length}、挖洞 ${validation.holes.length}）`;
       setBooleanMessage(message);
       showToast(validation.message);
       return;
     }
 
     try {
-      const target = solids[0];
-      if (solids.length > 1) showToast('已使用第一個實體作為打洞目標');
+      const target = validation.solids[0];
+      const cutters = validation.holes;
 
-      const result = runBooleanDifference(target, holes);
+      const result = runBooleanDifference(target, cutters);
       if (!result.geometry) {
-        const message = `${result.message}（選取 ${selected.length}、實體 ${solids.length}、挖洞 ${holes.length}、重疊 ${result.overlapCount}）`;
+        const message = `${result.message}（選取 ${selected.length}、實體 ${validation.solids.length}、挖洞 ${validation.holes.length}、重疊 ${result.overlapCount}）`;
         setBooleanMessage(message);
         showToast(result.message);
         return;
       }
 
       pushHistory('boolean');
-      const resultName = getNextNamedObjectName('打洞結果');
+      const resultName = getNextNamedObjectName(`${target.name} 打洞`);
       const mesh = createMeshFromGeometry(resultName, result.geometry, target.userData.color || getPrimaryColor(target));
       mesh.userData.mode = 'solid';
       mesh.userData.shapeType = 'boolean';
+      mesh.userData.printObject = true;
       mesh.position.set(0, 0, 0);
       mesh.rotation.set(0, 0, 0);
       mesh.scale.set(1, 1, 1);
 
-      const removedItems = [target, ...holes];
+      const removedItems = [target, ...cutters];
       removedItems.forEach((object) => sceneRef.current.remove(object));
       objectsRef.current = objectsRef.current.filter((object) => !removedItems.includes(object));
       objectsRef.current.push(mesh);
       sceneRef.current.add(mesh);
       refreshObjects();
       attachTransformForSelection([mesh.uuid]);
-      const skippedMessage = result.skipped.length ? '已略過未重疊的挖洞物件。' : '';
-      setBooleanMessage(`布林打洞完成。實體 ${solids.length}、挖洞 ${holes.length}、已使用 ${result.usedHoles.length}。${skippedMessage}`);
-      showToast(result.skipped.length ? '已略過未重疊的挖洞物件，已套用打洞' : '已套用打洞');
+      const skippedMessage = result.skipped.length ? '已略過未相交的挖洞物件。' : '';
+      setBooleanMessage(`布林打洞完成。實體 1、挖洞 ${cutters.length}、已使用 ${result.usedHoles.length}。${skippedMessage}`);
+      showToast(result.skipped.length ? '已略過未相交的挖洞物件，已套用打洞' : '已套用打洞');
     } catch (error) {
       console.error('Boolean Difference failed', error);
-      const message = `打洞失敗：實體 ${solids.length}、挖洞 ${holes.length}，CSG 計算失敗：${error.message}`;
+      const message = `打洞失敗：實體 ${validation.solids.length}、挖洞 ${validation.holes.length}，CSG 計算失敗：${error.message}`;
       setBooleanMessage(message);
       recordError(message);
-      showToast('打洞失敗：請確認實體與挖洞物件有重疊');
+      showToast('打洞失敗：請確認實體與挖洞物件有相交');
     }
   }
 
@@ -4067,8 +4073,8 @@ export default function App() {
   const toolbarPrintObjects = selectedObjects.filter((object) => object.userData.printObject && object.visible !== false && !object.userData.locked);
   const toolbarSolidCount = toolbarPrintObjects.filter((object) => object.userData.mode !== 'hole').length;
   const toolbarHoleCount = toolbarPrintObjects.filter((object) => object.userData.mode === 'hole').length;
-  const canToolbarBoolean = toolbarSolidCount >= 1 && toolbarHoleCount >= 1;
-  const canToolbarMerge = toolbarSolidCount >= 2;
+  const canToolbarBoolean = toolbarSolidCount === 1 && toolbarHoleCount >= 1;
+  const canToolbarMerge = toolbarSolidCount >= 2 && toolbarHoleCount === 0;
   const resetProject = () => {
     showToast('\u65b0\u5efa\u5c08\u6848\u4e0b\u4e00\u7248\u6703\u52a0\u5165\uff1b\u76ee\u524d\u53ef\u5148\u522a\u9664\u5168\u90e8\u7269\u4ef6\u6216\u958b\u555f\u7bc4\u4f8b');
   };
@@ -4272,6 +4278,9 @@ export default function App() {
                 <>
                   <InspectorRow label="已選取" value={`${selectedObjects.length} 個物件`} />
                   <InspectorRow label="整體尺寸" value={formatSize(selectionSizeInfo.size)} />
+                  {toolbarSolidCount === 1 && toolbarHoleCount >= 1 && (
+                    <p className="inspector-muted">可使用「套用打洞」將挖洞物件從實體中扣除。</p>
+                  )}
                   <div className="inspector-action-grid">
                     <button onClick={groupSelected}>群組</button>
                     <button onClick={mergeSelected} disabled={!canToolbarMerge}>合併</button>
@@ -4359,10 +4368,10 @@ export default function App() {
             <InspectorCard title="布林 / 組合">
               <p className="inspector-muted">挖洞物件會以半透明紅色顯示，套用打洞後會從實體中扣除。</p>
               <div className="inspector-action-grid">
-                <button onClick={mergeSelected} disabled={!canToolbarMerge}>合併</button>
-                <button className="primary-action" onClick={applyHole} disabled={!canToolbarBoolean}>套用打洞</button>
-                <button onClick={() => setSelectedMode('solid')} disabled={!selectedIds.length}>設為實體</button>
-                <button onClick={() => setSelectedMode('hole')} disabled={!selectedIds.length}>設為挖洞</button>
+                <button onClick={mergeSelected} disabled={!canToolbarMerge} title="合併多個實體">合併</button>
+                <button className="primary-action" onClick={applyHole} disabled={!canToolbarBoolean} title="用挖洞物件扣除實體">套用打洞</button>
+                <button onClick={() => setSelectedMode('solid')} disabled={!selectedIds.length} title="設為一般實體物件">設為實體</button>
+                <button onClick={() => setSelectedMode('hole')} disabled={!selectedIds.length} title="設為半透明打洞物件">設為挖洞</button>
               </div>
               {booleanMessage && <div className="notice">{booleanMessage}</div>}
             </InspectorCard>
@@ -4591,8 +4600,8 @@ function ObjectToolsPanel({
   const solidCount = booleanSelectedObjects.filter((object) => object.userData.mode !== 'hole').length;
   const holeCount = booleanSelectedObjects.filter((object) => object.userData.mode === 'hole').length;
   const canGroup = booleanSelectedObjects.length >= 2;
-  const canMerge = solidCount >= 2;
-  const canBoolean = solidCount >= 1 && holeCount >= 1;
+  const canMerge = solidCount >= 2 && holeCount === 0;
+  const canBoolean = solidCount === 1 && holeCount >= 1;
   const canUngroup = !!primarySelected?.isGroup;
 
   return (
@@ -4617,10 +4626,10 @@ function ObjectToolsPanel({
 
       <ToolGroup title="布林 / 合併" hint="合併會將多個實體物件合成一個模型；套用打洞會使用挖洞物件切掉實體物件重疊區域。">
         <div className="prep-grid">
-          <button onClick={mergeSelected} disabled={!canMerge} title={canMerge ? '合併選取的實體物件' : '請至少選取 2 個實體物件才能合併'}>合併</button>
-          <button className="primary-action" onClick={applyHole} disabled={!canBoolean} title={canBoolean ? '使用挖洞物件切割實體' : '請選取至少 1 個實體與 1 個挖洞物件'}>套用打洞</button>
-          <button onClick={() => setSelectedMode('solid')} disabled={!selectedCount}>設為實體</button>
-          <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount}>設為挖洞</button>
+          <button onClick={mergeSelected} disabled={!canMerge} title={holeCount ? '挖洞物件請使用套用打洞' : '合併多個實體'}>合併</button>
+          <button className="primary-action" onClick={applyHole} disabled={!canBoolean} title={canBoolean ? '用挖洞物件扣除實體' : '請選取 1 個實體與至少 1 個挖洞物件'}>套用打洞</button>
+          <button onClick={() => setSelectedMode('solid')} disabled={!selectedCount} title="設為一般實體物件">設為實體</button>
+          <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount} title="設為半透明打洞物件">設為挖洞</button>
           {import.meta.env.DEV && <button onClick={createBooleanTest}>建立打洞測試</button>}
         </div>
       </ToolGroup>
