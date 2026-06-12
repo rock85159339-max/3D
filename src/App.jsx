@@ -42,6 +42,7 @@ import ModelingModeToolbar from './components/ModelingModeToolbar.jsx';
 import ModelingToolPanel from './components/ModelingToolPanel.jsx';
 import ViewAssistPanel from './components/ViewAssistPanel.jsx';
 import ModeHintOverlay from './components/ModeHintOverlay.jsx';
+import ToolboxPanel from './components/ToolboxPanel.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { applyCameraView, applyOrbitControlStyle, focusCameraOnBox as focusCameraOnBoxUtil, toggleCameraProjectionFov } from './utils/cameraUtils.js';
@@ -933,6 +934,7 @@ export default function App() {
   const [activeWorkflow, setActiveWorkflow] = useState('model');
   const [uiMode, setUiMode] = useState('beginner');
   const [rightPanelTab, setRightPanelTab] = useState('properties');
+  const [leftToolTab, setLeftToolTab] = useState('create');
   const [modelingMode, setModelingMode] = useState('object');
   const [edgeSelection, setEdgeSelection] = useState(null);
   const [vertexSelection, setVertexSelection] = useState(null);
@@ -3669,6 +3671,30 @@ export default function App() {
       )}
 
       <LeftPanel>
+        <ToolboxPanel
+          activeTab={leftToolTab}
+          onTabChange={setLeftToolTab}
+          resolution={shapeResolution}
+          onResolutionChange={setShapeResolution}
+          shapes={SHAPES}
+          onAddShape={addShape}
+          onAddText={addText}
+          hasSelection={!!selectedIds.length}
+          onCenter={centerSelectedOnPlate}
+          onDrop={dropSelectedToPlate}
+          onRowDuplicate={arrayDuplicate}
+          onMatrixDuplicate={matrixDuplicateStub}
+          onSetHole={() => setSelectedMode('hole')}
+          onSetSolid={() => setSelectedMode('solid')}
+          modelingMode={modelingMode}
+          onModelingModeChange={switchModelingMode}
+          uiMode={uiMode}
+          onSetAdvancedMode={() => setUiMode('advanced')}
+          onOpenRepairTools={() => {
+            setRightPanelTab('repair');
+            switchWorkflow('prep');
+          }}
+        />
         <div className="brand compact-brand"><span className="brand-mark">mm</span><span>工具箱</span></div>
         <CommonToolsPanel
           disabled={!selectedIds.length}

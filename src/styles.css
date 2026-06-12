@@ -99,7 +99,7 @@ select {
 .app-shell {
   display: grid;
   grid-template-columns: 226px minmax(0, 1fr) 340px;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
   background: #090d13;
@@ -360,16 +360,80 @@ select {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   background: #101722;
   border-color: #1f2a38;
   border-style: solid;
 }
 
 .left-panel {
-  gap: 14px;
-  padding: 14px;
+  gap: 0;
+  padding: 0;
   border-width: 0 1px 0 0;
+}
+
+.left-panel > .left-toolbox-shell ~ * {
+  display: none;
+}
+
+.left-toolbox-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+  padding: 12px;
+}
+
+.toolbox-brand {
+  flex: 0 0 auto;
+}
+
+.left-tool-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.left-tool-tabs button {
+  min-height: 32px;
+  border: 1px solid #263244;
+  border-radius: 7px;
+  color: #aebed0;
+  background: #121a27;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.left-tool-tabs button.active {
+  border-color: #38bdf8;
+  color: #f8fafc;
+  background: #193149;
+}
+
+.left-tool-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #0f1722;
+}
+
+.left-tool-content::-webkit-scrollbar {
+  width: 7px;
+}
+
+.left-tool-content::-webkit-scrollbar-track {
+  background: #0f1722;
+}
+
+.left-tool-content::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #334155;
 }
 
 .guide-panel {
@@ -449,7 +513,8 @@ select {
 .tool-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  min-height: 0;
 }
 
 .section-label {
@@ -461,9 +526,35 @@ select {
 .tool-button {
   justify-content: flex-start;
   width: 100%;
-  min-height: 42px;
-  padding: 0 12px;
+  min-height: 36px;
+  padding: 0 10px;
   font-weight: 900;
+}
+
+.compact-tool-section {
+  gap: 7px;
+}
+
+.left-mode-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.left-mode-buttons button {
+  min-height: 32px;
+  border: 1px solid #263244;
+  border-radius: 7px;
+  color: #b7c6d8;
+  background: #121a27;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.left-mode-buttons button.active {
+  border-color: #facc15;
+  color: #fef9c3;
+  background: rgba(250, 204, 21, 0.12);
 }
 
 .primary-tool {
@@ -1658,7 +1749,7 @@ select:focus {
 
   .app-shell {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto 62vh auto;
+    grid-template-rows: auto auto auto auto 62vh auto;
     min-height: 100vh;
     height: auto;
   }
@@ -1676,6 +1767,11 @@ select:focus {
   .left-panel {
     display: grid;
     grid-template-columns: 1fr;
+    max-height: 360px;
+  }
+
+  .left-tool-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .tool-section {
