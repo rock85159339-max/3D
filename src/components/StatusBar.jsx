@@ -46,8 +46,8 @@ export default function StatusBar({
       ? '框選'
       : toolLabels[mode] || mode;
   const hint = operationStyle === 'maya'
-    ? '提示：Alt + 左鍵旋轉，Alt + 中鍵平移，Alt + 右鍵縮放，F 聚焦選取'
-    : '提示：左鍵拖曳旋轉視角，滾輪縮放，按住滾輪拖曳平移視角，G/R/S 移動/旋轉/縮放，F 聚焦';
+    ? '提示：Alt + 左鍵旋轉，滾輪縮放，滾輪拖曳或右鍵拖曳平移視角，F 聚焦選取'
+    : '提示：左鍵拖曳旋轉視角，滾輪縮放，滾輪拖曳或右鍵拖曳平移視角，G/R/S 移動/旋轉/縮放，F 聚焦';
   const appName = appInfo.name === 'Print Modeler' ? '3D 列印建模器' : appInfo.name;
 
   return (

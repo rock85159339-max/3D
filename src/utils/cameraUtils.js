@@ -48,23 +48,30 @@ export function toggleCameraProjectionFov(camera, currentProjection) {
   return next;
 }
 
+export function configureOrbitControls(controls, THREERef, sensitivity = 1) {
+  if (!controls) return;
+  const speed = Math.max(0.1, Number(sensitivity) || 1);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.enablePan = true;
+  controls.screenSpacePanning = true;
+  controls.panSpeed = speed;
+  controls.enableZoom = true;
+  controls.zoomSpeed = speed;
+  controls.enableRotate = true;
+  controls.rotateSpeed = 0.8 * speed;
+  controls.mouseButtons = {
+    LEFT: THREERef.MOUSE.ROTATE,
+    MIDDLE: THREERef.MOUSE.PAN,
+    RIGHT: THREERef.MOUSE.PAN,
+  };
+}
+
 export function applyOrbitControlStyle(orbit, THREERef, style, sensitivity = 1) {
   if (!orbit) return;
-  const speed = Math.max(0.1, Number(sensitivity) || 1);
-  orbit.rotateSpeed = speed;
-  orbit.panSpeed = speed;
-  orbit.zoomSpeed = speed;
-  if (style === 'maya') {
-    orbit.mouseButtons = {
-      LEFT: THREERef.MOUSE.ROTATE,
-      MIDDLE: THREERef.MOUSE.PAN,
-      RIGHT: THREERef.MOUSE.DOLLY,
-    };
-  } else {
-    orbit.mouseButtons = {
-      LEFT: THREERef.MOUSE.ROTATE,
-      MIDDLE: THREERef.MOUSE.ROTATE,
-      RIGHT: THREERef.MOUSE.PAN,
-    };
-  }
+  configureOrbitControls(orbit, THREERef, sensitivity);
+  orbit.userData = {
+    ...(orbit.userData || {}),
+    operationStyle: style,
+  };
 }

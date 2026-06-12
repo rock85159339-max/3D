@@ -769,6 +769,11 @@ select {
 .three-viewport {
   width: 100%;
   height: 100%;
+  touch-action: none;
+}
+
+.three-viewport canvas {
+  touch-action: none;
 }
 
 .empty-scene-hint {
@@ -938,6 +943,7 @@ select {
   justify-content: flex-end;
   gap: 6px;
   max-width: 235px;
+  pointer-events: none;
 }
 
 .view-buttons button {
@@ -949,6 +955,7 @@ select {
   padding: 0 8px;
   font-size: 11px;
   font-weight: 900;
+  pointer-events: auto;
 }
 
 .view-buttons button:hover {

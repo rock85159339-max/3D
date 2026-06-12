@@ -45,7 +45,7 @@ import ScaleFeedbackOverlay from './components/ScaleFeedbackOverlay.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { getRuntimeLabel, openTextFileDesktop, saveTextFileDesktop } from './utils/desktopFileService.js';
-import { applyCameraView, applyOrbitControlStyle, focusCameraOnBox as focusCameraOnBoxUtil, toggleCameraProjectionFov } from './utils/cameraUtils.js';
+import { applyCameraView, applyOrbitControlStyle, configureOrbitControls, focusCameraOnBox as focusCameraOnBoxUtil, toggleCameraProjectionFov } from './utils/cameraUtils.js';
 import {
   analyzeMeshRepairGeometry,
   fillHolesGeometry,
@@ -930,7 +930,9 @@ export default function App() {
   const sculptChangedRef = useRef(false);
   const isTransformDraggingRef = useRef(false);
   const isGizmoPointerDownRef = useRef(false);
-  const isMiddleMousePanningRef = useRef(false);
+  const isViewportPanningRef = useRef(false);
+  const viewportPanStartRef = useRef(null);
+  const suppressContextMenuRef = useRef(false);
   const suppressNextClickSelectionRef = useRef(false);
   const transformHistorySnapshotRef = useRef(null);
   const measureActiveRef = useRef(false);
@@ -1188,12 +1190,7 @@ export default function App() {
     mount.appendChild(renderer.domElement);
 
     const orbit = new OrbitControls(camera, renderer.domElement);
-    orbit.enableDamping = true;
-    orbit.dampingFactor = 0.08;
-    orbit.enablePan = true;
-    orbit.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
-    orbit.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
-    orbit.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+    configureOrbitControls(orbit, THREE, prefsRef.current?.mouseSensitivity || 1);
     orbit.target.set(0, 0, 25);
     orbitRef.current = orbit;
 
@@ -1278,8 +1275,10 @@ export default function App() {
     };
 
     const onPointerDown = (event) => {
-      if (event.button === 1) {
-        isMiddleMousePanningRef.current = true;
+      if (event.button === 1 || event.button === 2) {
+        isViewportPanningRef.current = true;
+        viewportPanStartRef.current = { x: event.clientX, y: event.clientY, button: event.button };
+        if (event.button === 2) suppressContextMenuRef.current = false;
         setOperationStatus('視角平移');
         return;
       }
@@ -1301,8 +1300,8 @@ export default function App() {
         return;
       }
 
-      if (event.shiftKey && (event.button === 0 || event.button === 1)) setOperationStatus('視角平移');
-      else if (event.button === 0 || event.button === 1) setOperationStatus('視角旋轉');
+      if (event.shiftKey && event.button === 0) setOperationStatus('視角平移');
+      else if (event.button === 0) setOperationStatus('視角旋轉');
 
       if (event.button !== 0) return;
       if (suppressNextClickSelectionRef.current || isGizmoPointerDownRef.current) return;
@@ -1367,7 +1366,14 @@ export default function App() {
     };
 
     const onPointerMove = (event) => {
-      if (isMiddleMousePanningRef.current) return;
+      if (isViewportPanningRef.current) {
+        const start = viewportPanStartRef.current;
+        if (start?.button === 2) {
+          const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y) > 3;
+          if (moved) suppressContextMenuRef.current = true;
+        }
+        return;
+      }
       const rect = renderer.domElement.getBoundingClientRect();
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -1382,7 +1388,7 @@ export default function App() {
         return;
       }
       renderer.domElement.style.cursor = '';
-      if (event.buttons && (event.shiftKey || event.button === 1)) setOperationStatus('視角平移');
+      if (event.buttons && event.shiftKey) setOperationStatus('視角平移');
       if (boxSelectStartRef.current) {
         event.preventDefault();
         event.stopPropagation();
@@ -1402,8 +1408,9 @@ export default function App() {
     };
 
     const onPointerUp = (event) => {
-      if (event.button === 1) {
-        isMiddleMousePanningRef.current = false;
+      if (event.button === 1 || event.button === 2) {
+        isViewportPanningRef.current = false;
+        viewportPanStartRef.current = null;
         setOperationStatus('就緒');
         return;
       }
@@ -1432,7 +1439,8 @@ export default function App() {
     };
 
     const onPointerLeave = () => {
-      isMiddleMousePanningRef.current = false;
+      isViewportPanningRef.current = false;
+      viewportPanStartRef.current = null;
       if (!isTransformDraggingRef.current && !transform.dragging) {
         isGizmoPointerDownRef.current = false;
         if (orbitRef.current) orbitRef.current.enabled = true;
@@ -1443,14 +1451,25 @@ export default function App() {
       }
     };
 
+    const clearViewportPanning = () => {
+      if (!isViewportPanningRef.current) return;
+      isViewportPanningRef.current = false;
+      viewportPanStartRef.current = null;
+      setOperationStatus('就緒');
+    };
+
     renderer.domElement.addEventListener('pointerdown', onPointerDown, true);
     renderer.domElement.addEventListener('pointermove', onPointerMove);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
     renderer.domElement.addEventListener('pointerleave', onPointerLeave);
+    window.addEventListener('pointerup', clearViewportPanning);
 
     const onContextMenu = (event) => {
       event.preventDefault();
-      event.stopPropagation();
+      if (suppressContextMenuRef.current || isViewportPanningRef.current) {
+        suppressContextMenuRef.current = false;
+        return;
+      }
       const rect = renderer.domElement.getBoundingClientRect();
       pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -1493,9 +1512,11 @@ export default function App() {
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
       renderer.domElement.removeEventListener('contextmenu', onContextMenu);
+      window.removeEventListener('pointerup', clearViewportPanning);
       isTransformDraggingRef.current = false;
       isGizmoPointerDownRef.current = false;
-      isMiddleMousePanningRef.current = false;
+      isViewportPanningRef.current = false;
+      viewportPanStartRef.current = null;
       suppressNextClickSelectionRef.current = false;
       orbit.enabled = true;
       clearBrushPreview();
