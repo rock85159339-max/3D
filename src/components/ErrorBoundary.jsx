@@ -22,11 +22,11 @@ export default class ErrorBoundary extends React.Component {
     return (
       <main className="app-error-screen">
         <section>
-          <h1>Print Modeler failed to open</h1>
-          <p>程式載入時發生錯誤。請把下面訊息貼給我，我可以直接修。</p>
+          <h1>3D 列印建模器無法開啟</h1>
+          <p>程式載入時發生錯誤。請把下方錯誤訊息提供給我，我可以直接協助修正。</p>
           <pre>{error.stack || error.message}</pre>
           {info?.componentStack && <pre>{info.componentStack}</pre>}
-          <button onClick={() => window.location.reload()}>Reload</button>
+          <button onClick={() => window.location.reload()}>重新載入</button>
         </section>
       </main>
     );

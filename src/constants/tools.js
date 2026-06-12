@@ -9,12 +9,12 @@ import {
 } from 'lucide-react';
 
 export const SHAPES = {
-  cube: { label: 'Cube', icon: Box, size: { x: 20, y: 20, z: 20 } },
-  sphere: { label: 'Sphere', icon: Circle, size: { x: 20, y: 20, z: 20 } },
-  cylinder: { label: 'Cylinder', icon: Cylinder, size: { x: 20, y: 20, z: 30 } },
-  torus: { label: 'Torus', icon: Circle, size: { x: 30, y: 30, z: 5 } },
-  cone: { label: 'Cone', icon: Cylinder, size: { x: 25, y: 25, z: 35 } },
-  text: { label: 'Text', icon: Type, size: { x: 40, y: 12, z: 4 } },
+  cube: { label: '方塊', icon: Box, size: { x: 20, y: 20, z: 20 } },
+  sphere: { label: '球體', icon: Circle, size: { x: 20, y: 20, z: 20 } },
+  cylinder: { label: '圓柱', icon: Cylinder, size: { x: 20, y: 20, z: 30 } },
+  torus: { label: '圓環', icon: Circle, size: { x: 30, y: 30, z: 5 } },
+  cone: { label: '圓錐', icon: Cylinder, size: { x: 25, y: 25, z: 35 } },
+  text: { label: '文字', icon: Type, size: { x: 40, y: 12, z: 4 } },
 };
 
 export const MODE_BUTTONS = [

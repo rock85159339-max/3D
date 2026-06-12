@@ -86,17 +86,17 @@ export function validateBooleanInput(selectedObjects) {
   const holes = selectedObjects.filter((object) => object.userData.mode === 'hole');
 
   if (!solids.length) {
-    return { ok: false, solids, holes, message: '請選取 1 個 Solid 物件作為打洞目標' };
+    return { ok: false, solids, holes, message: '請選取 1 個實體物件作為打洞目標' };
   }
   if (!holes.length) {
-    return { ok: false, solids, holes, message: '請選取至少 1 個 Hole 物件作為切割工具' };
+    return { ok: false, solids, holes, message: '請選取至少 1 個挖洞物件作為切割工具' };
   }
   return { ok: true, solids, holes, message: '' };
 }
 
 export function runBooleanDifference(targetObject, holeObjects) {
   const targetGeometry = objectToWorldGeometry(targetObject);
-  if (!targetGeometry) throw new Error('找不到 Solid 可用幾何資料');
+  if (!targetGeometry) throw new Error('找不到實體物件可用幾何資料');
 
   const targetBox = getGeometryBox(targetGeometry);
   const overlapping = [];
@@ -111,7 +111,7 @@ export function runBooleanDifference(targetObject, holeObjects) {
 
     const box = getGeometryBox(geometry);
     if (!targetBox.intersectsBox(box)) {
-      skipped.push({ object: hole, reason: '未與 Solid 重疊' });
+      skipped.push({ object: hole, reason: '未與實體重疊' });
       geometry.dispose?.();
       return;
     }
@@ -126,7 +126,7 @@ export function runBooleanDifference(targetObject, holeObjects) {
       skipped,
       usedHoles: [],
       overlapCount: 0,
-      message: 'Hole 沒有與 Solid 重疊，無法打洞',
+      message: '挖洞物件沒有與實體重疊，無法打洞',
     };
   }
 
@@ -149,6 +149,6 @@ export function runBooleanDifference(targetObject, holeObjects) {
     skipped,
     usedHoles: overlapping.map(({ object }) => object),
     overlapCount: overlapping.length,
-    message: skipped.length ? '已略過未重疊的 Hole' : '',
+    message: skipped.length ? '已略過未重疊的挖洞物件' : '',
   };
 }

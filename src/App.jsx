@@ -172,7 +172,7 @@ function makeCylinder(name, radius, height, color, position = { x: 0, y: 0, z: 0
 
 function makeTextMesh(textSettings, color) {
   const { text, size, depth, align } = textSettings;
-  const geometry = new TextGeometry(text || 'TEXT', {
+  const geometry = new TextGeometry(text || '文字', {
     font,
     size,
     depth,
@@ -469,7 +469,7 @@ function createShape(type, index = 0, resolution = 'low') {
   return markPrintObject(object, `${def.label} ${index + 1}`, type, { color });
 }
 
-function createTextObject(index = 0, settings = { text: 'TEXT', size: 18, depth: 4, align: 'center' }) {
+function createTextObject(index = 0, settings = { text: '文字', size: 18, depth: 4, align: 'center' }) {
   const color = '#f8fafc';
   const mesh = makeTextMesh(settings, new THREE.Color(color));
   mesh.position.set((index % 5) * 8 - 16, 0, settings.depth / 2);
@@ -633,7 +633,7 @@ function clonePrintable(source) {
       child.material = child.material.clone();
     }
   });
-  clone.name = `${source.name} Copy`;
+  clone.name = `${source.name} 複製`;
   clone.position.x += 8;
   clone.position.y += 8;
   clone.userData = structuredClone(source.userData);
@@ -852,7 +852,7 @@ function objectFromProjectData(data) {
       child.receiveShadow = true;
     }
   });
-  return markPrintObject(object, data.name || 'Object', data.shapeType || 'custom', data);
+  return markPrintObject(object, data.name || '物件', data.shapeType || 'custom', data);
 }
 
 export default function App() {
@@ -900,7 +900,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [selected, setSelected] = useState(null);
   const [activeWorkflow, setActiveWorkflow] = useState('model');
-  const [projectName, setProjectName] = useState('Untitled Model');
+  const [projectName, setProjectName] = useState('未命名模型');
   const [lastAutosave, setLastAutosave] = useState('');
   const [showGuide, setShowGuide] = useState(() => localStorage.getItem('printModeler.hideGuide') !== 'true');
   const [editMode, setEditMode] = useState('object');
@@ -1901,7 +1901,7 @@ export default function App() {
       return;
     }
     if (object.userData.locked) {
-      showToast('Object is locked');
+      showToast('物件已鎖定');
       return;
     }
     const current = selectedIdsRef.current;
@@ -2109,11 +2109,11 @@ export default function App() {
   function focusSelectedObject() {
     const target = primarySelected || objectsRef.current.find((object) => selectedIdsRef.current.includes(object.uuid));
     if (!target) {
-      showToast('Please select an object first');
+      showToast('請先選取物件');
       return;
     }
     focusCameraOnBoxUtil(cameraRef.current, orbitRef.current, getObjectBounds(target).box, 80);
-    showToast('Focused selected object');
+    showToast('已聚焦選取物件');
   }
 
   function frameAllObjects() {
@@ -2136,7 +2136,7 @@ export default function App() {
     setCameraProjection(next);
     cameraProjectionRef.current = next;
     localStorage.setItem('printModeler.cameraProjection', next);
-    showToast(next === 'orthographic' ? 'Ortho view enabled' : 'Perspective view enabled');
+    showToast(next === 'orthographic' ? '已切換為正交視角' : '已切換為透視視角');
   }
 
   function setAxisLock(axis) {
@@ -2149,11 +2149,11 @@ export default function App() {
 
   function deleteSelectedWithConfirm() {
     if (!selectedIdsRef.current.length) {
-      showToast('No object selected');
+      showToast('沒有選取物件');
       return;
     }
-    if (window.confirm('Delete selected object(s)?')) deleteSelected();
-    else showToast('Delete cancelled');
+    if (window.confirm('確定要刪除選取物件嗎？')) deleteSelected();
+    else showToast('已取消刪除');
   }
 
   function selectObjectsInBox(selectionRect = boxSelectRectRef.current) {
@@ -2175,13 +2175,13 @@ export default function App() {
     }).map((object) => object.uuid);
     attachTransformForSelection(ids);
     setBoxSelectActive(false);
-    showToast(ids.length ? `Box selected ${ids.length} object(s)` : 'No objects in box');
+    showToast(ids.length ? `框選 ${ids.length} 個物件` : '框選範圍內沒有物件');
   }
 
   function copySelectedToClipboard() {
     const source = primarySelected || objectsRef.current.find((object) => selectedIdsRef.current.includes(object.uuid));
     if (!source) {
-      showToast('No object selected');
+      showToast('沒有選取物件');
       return;
     }
     setClipboardObject(clonePrintable(source));
@@ -2190,7 +2190,7 @@ export default function App() {
 
   function pasteClipboardObject() {
     if (!clipboardObject) {
-      showToast('Clipboard is empty');
+      showToast('剪貼簿是空的');
       return;
     }
     pushHistory('paste');
@@ -2199,12 +2199,12 @@ export default function App() {
     sceneRef.current.add(clone);
     refreshObjects();
     attachTransformForSelection([clone.uuid]);
-    showToast('Pasted object');
+    showToast('已貼上物件');
   }
 
   function renameObject(object, name) {
     if (!object) return;
-    object.name = name || 'Object';
+    object.name = name || '物件';
     refreshObjects();
     if (selectedIdsRef.current.includes(object.uuid)) setSelected(readTransform(object));
   }
@@ -2326,7 +2326,7 @@ export default function App() {
 
     const validation = validateBooleanInput(selected);
     if (!validation.ok) {
-      const message = `${validation.message}（選取 ${selected.length}、Solid ${solids.length}、Hole ${holes.length}）`;
+      const message = `${validation.message}（選取 ${selected.length}、實體 ${solids.length}、挖洞 ${holes.length}）`;
       setBooleanMessage(message);
       showToast(validation.message);
       return;
@@ -2334,11 +2334,11 @@ export default function App() {
 
     try {
       const target = solids[0];
-      if (solids.length > 1) showToast('已使用第一個 Solid 作為打洞目標');
+      if (solids.length > 1) showToast('已使用第一個實體作為打洞目標');
 
       const result = runBooleanDifference(target, holes);
       if (!result.geometry) {
-        const message = `${result.message}（選取 ${selected.length}、Solid ${solids.length}、Hole ${holes.length}、重疊 ${result.overlapCount}）`;
+        const message = `${result.message}（選取 ${selected.length}、實體 ${solids.length}、挖洞 ${holes.length}、重疊 ${result.overlapCount}）`;
         setBooleanMessage(message);
         showToast(result.message);
         return;
@@ -2360,14 +2360,14 @@ export default function App() {
       sceneRef.current.add(mesh);
       refreshObjects();
       attachTransformForSelection([mesh.uuid]);
-      const skippedMessage = result.skipped.length ? '已略過未重疊的 Hole。' : '';
-      setBooleanMessage(`布林打洞完成。Solid ${solids.length}、Hole ${holes.length}、已使用 ${result.usedHoles.length}。${skippedMessage}`);
-      showToast(result.skipped.length ? '已略過未重疊的 Hole，已套用打洞' : '已套用打洞');
+      const skippedMessage = result.skipped.length ? '已略過未重疊的挖洞物件。' : '';
+      setBooleanMessage(`布林打洞完成。實體 ${solids.length}、挖洞 ${holes.length}、已使用 ${result.usedHoles.length}。${skippedMessage}`);
+      showToast(result.skipped.length ? '已略過未重疊的挖洞物件，已套用打洞' : '已套用打洞');
     } catch (error) {
       console.error('Boolean Difference failed', error);
-      const message = `打洞失敗：Solid ${solids.length}、Hole ${holes.length}，CSG 計算失敗：${error.message}`;
+      const message = `打洞失敗：實體 ${solids.length}、挖洞 ${holes.length}，CSG 計算失敗：${error.message}`;
       setBooleanMessage(message);
-      showToast(`打洞失敗：請確認 Solid 與 Hole 有重疊`);
+      showToast('打洞失敗：請確認實體與挖洞物件有重疊');
     }
   }
 
@@ -2558,7 +2558,7 @@ export default function App() {
   }
 
   function applySelectedTransform() {
-    return runSafe('Apply Transform', () => {
+    return runSafe('套用變形', () => {
       const target = getSelectedPrintableTarget();
       if (!target) return;
       pushHistory('apply transform');
@@ -2665,7 +2665,7 @@ export default function App() {
   }
 
   function findSelectedHoles() {
-    return runSafe('Find Holes', () => {
+    return runSafe('尋找破洞', () => {
       const target = getSelectedPrintableTarget();
       if (!target) return;
       const result = summarizeRepairTarget(target, '已尋找破洞');
@@ -2676,7 +2676,7 @@ export default function App() {
   }
 
   function fillSelectedHoles() {
-    return runSafe('Fill Holes', () => {
+    return runSafe('補洞', () => {
       const target = getSelectedPrintableTarget();
       if (!target) return;
       pushHistory('fill holes');
@@ -2748,7 +2748,7 @@ export default function App() {
   }
 
   function autoRepairSelectedMesh() {
-    return runSafe('Auto Repair', () => {
+    return runSafe('自動修復', () => {
       const target = getSelectedPrintableTarget();
       if (!target) return;
       pushHistory('auto repair');
@@ -2766,8 +2766,8 @@ export default function App() {
         filled += fillResult.filled;
         replaceMeshGeometry(mesh, fillResult.geometry);
       });
-      finishPrintPrepChange(target.object, 'Auto Repair 完成');
-      const summary = summarizeRepairTarget(target, `Auto Repair：合併 ${merged} 點，移除 ${degenerate} 面，補 ${filled} 洞`);
+      finishPrintPrepChange(target.object, '自動修復完成');
+      const summary = summarizeRepairTarget(target, `自動修復：合併 ${merged} 點，移除 ${degenerate} 面，補 ${filled} 洞`);
       setMeshRepairResult(summary);
       setMeshCheckResults(buildMeshCheckResults([target.object]));
       clearRepairHelper();
@@ -2919,7 +2919,7 @@ export default function App() {
   }
 
   function exportModel(format) {
-    return runSafe(`Export ${format.toUpperCase()}`, () => {
+    return runSafe(`匯出 ${format.toUpperCase()}`, () => {
       detachSelectionGroup();
       if (!objectsRef.current.length) {
         showToast('沒有可匯出的物件');
@@ -2958,7 +2958,7 @@ export default function App() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      runSafe('Load JSON', () => {
+      runSafe('載入 JSON', () => {
         const data = JSON.parse(reader.result);
         loadProjectData(data);
         showToast('已載入專案');
@@ -2981,15 +2981,15 @@ export default function App() {
     <main className={`app-shell density-${prefs.density}`} onClick={closeContextMenu}>
       <TopToolbar>
         <div className="project-strip">
-          <input className="project-name-input" value={projectName} onChange={(event) => setProjectName(event.target.value || 'Untitled Model')} />
-          <span>{lastAutosave ? `Autosaved ${lastAutosave}` : 'Autosave ready'}</span>
+          <input className="project-name-input" value={projectName} placeholder="未命名模型" onChange={(event) => setProjectName(event.target.value || '未命名模型')} />
+          <span>{lastAutosave ? `已自動儲存：${lastAutosave}` : '自動儲存已準備'}</span>
         </div>
         <div className="toolbar-group">
           <button onClick={undo} disabled={!historyRef.current.length}>復原 Undo</button>
           <button onClick={redo} disabled={!redoRef.current.length}>重做 Redo</button>
-          <button className="danger" onClick={deleteSelectedWithConfirm} disabled={!selectedIds.length}><Trash2 size={18} />Delete</button>
+          <button className="danger" onClick={deleteSelectedWithConfirm} disabled={!selectedIds.length}><Trash2 size={18} />刪除</button>
           <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={loadProjectFile} />
-          <button onClick={() => setShowPreferences((value) => !value)}>Preferences</button>
+          <button onClick={() => setShowPreferences((value) => !value)}>偏好設定</button>
         </div>
         <label className="switch-control">
           <input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />
@@ -3061,7 +3061,7 @@ export default function App() {
             <span className="section-label">{WORKFLOW_TABS.find((tab) => tab.key === activeWorkflow)?.label} 工具</span>
             {activeWorkflow === 'face' && <p>請在模型表面點選一個面，右側可推拉、軟編輯與平滑。</p>}
             {activeWorkflow === 'sculpt' && <p>選擇筆刷後，在模型表面按住左鍵拖曳即可雕刻。</p>}
-            {activeWorkflow === 'prep' && <p>使用右側 Print Prep / Mesh Repair 工具檢查、修復與封口模型。</p>}
+            {activeWorkflow === 'prep' && <p>使用右側列印修復與網格修復工具檢查、修復與封口模型。</p>}
             {activeWorkflow === 'export' && <p>請先 Check Mesh，再匯出 STL 進行 3D 列印。</p>}
           </div>
         )}
@@ -3079,7 +3079,7 @@ export default function App() {
 
       <RightPanel>
         <section className="sidebar-section outliner-section">
-          <div className="sidebar-title"><span>Outliner</span><small>{objects.length} objects</small></div>
+          <div className="sidebar-title"><span>物件列表</span><small>{objects.length} 個物件</small></div>
           <Outliner
             objects={objects}
             selectedIds={selectedIds}
@@ -3091,7 +3091,7 @@ export default function App() {
         </section>
 
         <section className="sidebar-section properties-section">
-          <div className="sidebar-title"><span>Properties / Tool Settings</span><small>{selectedIds.length} selected</small></div>
+          <div className="sidebar-title"><span>屬性 / 工具設定</span><small>{selectedIds.length} 個已選取</small></div>
           <details className="accordion-panel" open>
             <summary>列印平台</summary>
             <div className="platform-size">{printerSize.x} x {printerSize.y} x {printerSize.z} mm</div>
@@ -3102,7 +3102,7 @@ export default function App() {
 
           {activeWorkflow === 'prep' ? (
             <details className="accordion-panel" open>
-              <summary>Print Prep / Mesh Repair</summary>
+              <summary>列印修復 / 網格修復</summary>
               <PrintPrepPanel
                 settings={printPrepSettings}
                 onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
@@ -3132,7 +3132,7 @@ export default function App() {
             </details>
           ) : activeWorkflow === 'export' ? (
             <details className="accordion-panel" open>
-              <summary>Export</summary>
+              <summary>匯出</summary>
               <ExportPanel
                 onExportStl={() => exportModel('stl')}
                 onExportObj={() => exportModel('obj')}
@@ -3144,7 +3144,7 @@ export default function App() {
             </details>
           ) : activeWorkflow === 'face' ? (
             <details className="accordion-panel" open>
-              <summary>Face Edit</summary>
+              <summary>面編輯</summary>
               <FaceEditPanel
                 faceSelection={faceSelection}
                 settings={faceSettings}
@@ -3159,7 +3159,7 @@ export default function App() {
             </details>
           ) : activeWorkflow === 'sculpt' ? (
             <details className="accordion-panel" open>
-              <summary>Sculpt Brush</summary>
+              <summary>雕刻筆刷</summary>
               <SculptPanel
                 settings={sculptSettings}
                 onSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
@@ -3172,12 +3172,12 @@ export default function App() {
               <summary>物件屬性</summary>
             <label className="field"><span>名稱</span><input value={primarySelected?.name || selected.name} onChange={(event) => updateSelected('name', null, event.target.value)} /></label>
             <div className="row-fields">
-              <label className="field"><span>物件模式</span><select value={primarySelected?.userData.mode || 'solid'} onChange={(event) => updateSelected('mode', null, event.target.value)}><option value="solid">Solid</option><option value="hole">Hole</option></select></label>
+              <label className="field"><span>物件模式</span><select value={primarySelected?.userData.mode || 'solid'} onChange={(event) => updateSelected('mode', null, event.target.value)}><option value="solid">實體</option><option value="hole">挖洞</option></select></label>
               <label className="field"><span>顏色</span><input type="color" value={primarySelected?.userData.color || '#38bdf8'} onChange={(event) => updateSelected('color', null, event.target.value)} /></label>
             </div>
             </details>
             <details className="accordion-panel" open>
-              <summary>Object Tools</summary>
+              <summary>物件工具</summary>
             <ObjectToolsPanel
               mode={mode}
               setMode={setMode}
@@ -3209,10 +3209,10 @@ export default function App() {
                 clearMeasureHelper();
               }}
             />
-            <div className="notice">Hole 物件不會被列印，只用來切掉 Solid。</div>
+            <div className="notice">挖洞物件不會被列印，只用來切掉實體。</div>
             </details>
             <details className="accordion-panel" open>
-              <summary>Transform</summary>
+              <summary>變形</summary>
             <TransformFields title="位置" unit="mm" data={selected.position} onChange={(axis, value) => updateSelected('position', axis, value)} />
             <TransformFields title="旋轉" unit="deg" data={selected.rotation} onChange={(axis, value) => updateSelected('rotation', axis, value)} step="15" />
             <TransformFields title="實際尺寸" unit="mm" data={selected.dimensions} onChange={(axis, value) => updateSelected('dimensions', axis, value)} step="1" labels={{ x: '寬 X', y: '深 Y', z: '高 Z' }} />
@@ -3221,7 +3221,7 @@ export default function App() {
             {booleanMessage && <div className="notice">{booleanMessage}</div>}
             </details>
             <details className="accordion-panel">
-              <summary>Print Check</summary>
+              <summary>列印檢查</summary>
             <PrintCheckPanel check={selectedCheck} stats={printStats} />
             </details>
           </div>
@@ -3318,7 +3318,7 @@ function ObjectToolsPanel({
   const canUngroup = !!primarySelected?.isGroup;
   return (
     <section className="printer-card object-tools-card">
-      <div className="card-title">Object Mode 工具</div>
+      <div className="card-title">物件工具</div>
       <div className="segmented">
         {MODE_BUTTONS.map((item) => {
           const Icon = item.icon;
@@ -3331,16 +3331,16 @@ function ObjectToolsPanel({
         <button onClick={deleteSelected} disabled={!selectedCount}>刪除</button>
         <button onClick={centerSelectedOnPlate} disabled={!selectedCount}>置中</button>
         <button onClick={dropSelectedToPlate} disabled={!selectedCount}>貼齊平台</button>
-        <button onClick={groupSelected} disabled={!canGroup} title={canGroup ? '\u5c07\u9078\u53d6\u7269\u4ef6\u5efa\u7acb\u6210\u7fa4\u7d44' : '\u8acb\u81f3\u5c11\u9078\u53d6 2 \u500b\u7269\u4ef6\u624d\u80fd\u7fa4\u7d44'}>{'\u7fa4\u7d44'}</button>
-        <button onClick={ungroupSelected} disabled={!canUngroup} title={canUngroup ? '\u53d6\u6d88\u76ee\u524d\u7fa4\u7d44' : '\u8acb\u9078\u53d6\u7fa4\u7d44'}>{'\u53d6\u6d88\u7fa4\u7d44'}</button>
-        <button onClick={mergeSelected} disabled={!canMerge} title={canMerge ? '\u5408\u4f75\u9078\u53d6\u7684 Solid \u7269\u4ef6' : '\u8acb\u81f3\u5c11\u9078\u53d6 2 \u500b\u5be6\u9ad4\u7269\u4ef6\u624d\u80fd\u5408\u4f75'}>{'\u5408\u4f75'}</button>
-        <button onClick={() => setMeasureActive((value) => !value)} className={measureActive ? 'active' : ''}>Measure</button>
+        <button onClick={groupSelected} disabled={!canGroup} title={canGroup ? '將選取物件建立成群組' : '請至少選取 2 個物件才能群組'}>群組</button>
+        <button onClick={ungroupSelected} disabled={!canUngroup} title={canUngroup ? '取消目前群組' : '請選取群組'}>取消群組</button>
+        <button onClick={mergeSelected} disabled={!canMerge} title={canMerge ? '合併選取的實體物件' : '請至少選取 2 個實體物件才能合併'}>合併</button>
+        <button onClick={() => setMeasureActive((value) => !value)} className={measureActive ? 'active' : ''}>測量</button>
         <button onClick={() => setSelectedMode('solid')} disabled={!selectedCount}>設為實體</button>
-        <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount}>設為洞</button>
-        <button onClick={applyHole} disabled={!canBoolean} title={canBoolean ? '\u4f7f\u7528 Hole \u7269\u4ef6\u5207\u5272 Solid' : '\u8acb\u9078\u53d6\u81f3\u5c11 1 \u500b Solid \u8207 1 \u500b Hole'}>{'\u5957\u7528\u6253\u6d1e'}</button>
-        {import.meta.env.DEV && <button onClick={createBooleanTest}>Create Boolean Test</button>}
+        <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount}>設為挖洞</button>
+        <button onClick={applyHole} disabled={!canBoolean} title={canBoolean ? '使用挖洞物件切割實體' : '請選取至少 1 個實體與 1 個挖洞物件'}>套用打洞</button>
+        {import.meta.env.DEV && <button onClick={createBooleanTest}>建立打洞測試</button>}
       </div>
-      <div className="notice">Measure：開啟後在模型表面點兩個點，即可量測直線距離。</div>
+      <div className="notice">測量：開啟後在模型表面點兩個點，即可量測直線距離。</div>
       {measurePoints.length > 0 && (
         <div className="dimension-readout">
           <span>A：{measurePoints[0] ? `${roundNumber(measurePoints[0].x)} / ${roundNumber(measurePoints[0].y)} / ${roundNumber(measurePoints[0].z)} mm` : '-'}</span>
@@ -3350,9 +3350,9 @@ function ObjectToolsPanel({
         </div>
       )}
       <div className="mini-grid">
-        <button onClick={() => mirrorSelected('x')} disabled={!selectedCount}>Mirror X</button>
-        <button onClick={() => mirrorSelected('y')} disabled={!selectedCount}>Mirror Y</button>
-        <button onClick={() => mirrorSelected('z')} disabled={!selectedCount}>Mirror Z</button>
+        <button onClick={() => mirrorSelected('x')} disabled={!selectedCount}>X 鏡像</button>
+        <button onClick={() => mirrorSelected('y')} disabled={!selectedCount}>Y 鏡像</button>
+        <button onClick={() => mirrorSelected('z')} disabled={!selectedCount}>Z 鏡像</button>
         <button onClick={() => alignSelected('x', 'min')} disabled={selectedCount < 2}>X 左</button>
         <button onClick={() => alignSelected('x', 'center')} disabled={selectedCount < 2}>X 中</button>
         <button onClick={() => alignSelected('x', 'max')} disabled={selectedCount < 2}>X 右</button>
@@ -3386,13 +3386,13 @@ function ExportPanel({ onExportStl, onExportObj, onSave, onLoad, hasObjects, che
         <div className="export-steps">
           <strong>建議流程</strong>
           <ol>
-            <li>Apply Transform</li>
-            <li>Place on Bed</li>
-            <li>Check Mesh</li>
-            <li>Export STL</li>
+            <li>套用變形</li>
+            <li>置於平台</li>
+            <li>檢查模型</li>
+            <li>匯出 STL</li>
           </ol>
         </div>
-        {hasIssue && <div className="notice warning-note">目前檢查結果有警告或錯誤，建議先到 Print Prep 修復。</div>}
+        {hasIssue && <div className="notice warning-note">目前檢查結果有警告或錯誤，建議先到列印修復處理。</div>}
         <div className="prep-grid">
           <button onClick={onExportStl} disabled={!hasObjects}><Download size={14} /> 匯出 STL</button>
           <button onClick={onExportObj} disabled={!hasObjects}><Download size={14} /> 匯出 OBJ</button>
@@ -3432,7 +3432,7 @@ function PrintPrepPanel({
 }) {
   return (
     <section className="printer-card print-prep-card">
-      <div className="card-title">列印準備 Print Prep</div>
+      <div className="card-title">列印準備</div>
       {disabled && <div className="notice warning-note">請先選取要處理的物件。</div>}
       <div className="row-fields">
         <label className="field">
@@ -3478,19 +3478,19 @@ function PrintPrepPanel({
           <input type="number" min="0.0001" step="0.001" value={repairSettings.tolerance} onChange={(event) => onRepairSettingChange('tolerance', event.target.value)} />
         </label>
         <div className="prep-grid">
-          <button onClick={onFindHoles} disabled={disabled}>Find Holes</button>
-          <button onClick={onFillHoles} disabled={disabled}>Fill Holes</button>
+          <button onClick={onFindHoles} disabled={disabled}>尋找破洞</button>
+          <button onClick={onFillHoles} disabled={disabled}>補洞</button>
           <button onClick={onMergeCloseVertices} disabled={disabled}>Merge Close Vertices</button>
           <button onClick={onRemoveDegenerateFaces} disabled={disabled}>Remove Degenerate Faces</button>
           <button onClick={onRemoveLooseFaces} disabled={disabled}>Remove Loose Faces</button>
           <button onClick={onRecalculate} disabled={disabled}>Recalculate Normals</button>
-          <button onClick={onAutoRepair} disabled={disabled}>Auto Repair</button>
+          <button onClick={onAutoRepair} disabled={disabled}>自動修復</button>
         </div>
         {repairResult && (
           <div className="mesh-repair-results">
             <div className={`mesh-check-item ${repairResult.holeCount ? 'warning' : 'ok'}`}>
               <span>{repairResult.holeCount ? '⚠️' : '✅'}</span>
-              <strong>Hole 數量</strong>
+              <strong>破洞數量</strong>
               <p>{repairResult.holeCount}</p>
             </div>
             <div className={`mesh-check-item ${repairResult.boundaryEdgeCount ? 'warning' : 'ok'}`}>
@@ -3512,7 +3512,7 @@ function PrintPrepPanel({
             {!!repairResult.holeDetails?.length && (
               <div className="dimension-readout">
                 {repairResult.holeDetails.map((hole) => (
-                  <span key={hole.index}>Hole #{hole.index}：{hole.edgeCount} edges {hole.simple ? '' : '（複雜）'}</span>
+                  <span key={hole.index}>破洞 #{hole.index}：{hole.edgeCount} 條邊 {hole.simple ? '' : '（複雜）'}</span>
                 ))}
               </div>
             )}
@@ -3647,7 +3647,7 @@ function BevelFields({ selected, onChange }) {
 }
 
 function TextFields({ selected, onChange }) {
-  const settings = selected.textSettings || { text: 'TEXT', size: 18, depth: 4, align: 'center' };
+  const settings = selected.textSettings || { text: '文字', size: 18, depth: 4, align: 'center' };
   return (
     <section className="printer-card">
       <div className="card-title">文字設定</div>
@@ -3656,7 +3656,7 @@ function TextFields({ selected, onChange }) {
         <label className="field"><span>字體大小 mm</span><input type="number" value={settings.size} onChange={(event) => onChange('textSettings', 'size', event.target.value)} /></label>
         <label className="field"><span>厚度 mm</span><input type="number" value={settings.depth} onChange={(event) => onChange('textSettings', 'depth', event.target.value)} /></label>
       </div>
-      <label className="field"><span>對齊方式</span><select value={settings.align} onChange={(event) => onChange('textSettings', 'align', event.target.value)}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
+      <label className="field"><span>對齊方式</span><select value={settings.align} onChange={(event) => onChange('textSettings', 'align', event.target.value)}><option value="left">靠左</option><option value="center">置中</option><option value="right">靠右</option></select></label>
     </section>
   );
 }
@@ -3687,7 +3687,7 @@ function PrintCheckPanel({ check, stats }) {
       {stats && (
         <div className="dimension-readout warning-readout">
           <span>模型總尺寸 {stats.totalSize.x} x {stats.totalSize.y} x {stats.totalSize.z} mm</span>
-          <span>物件數 {stats.objectCount} / Solid {stats.solidCount} / Hole {stats.holeCount}</span>
+          <span>物件數 {stats.objectCount} / 實體 {stats.solidCount} / 挖洞 {stats.holeCount}</span>
           <span>超出平台 {stats.outsideCount} / 低於平台 {stats.belowPlatformCount}</span>
           <span>懸空 {stats.floatingCount} / 小於 1mm {stats.thinCount}</span>
         </div>
