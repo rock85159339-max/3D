@@ -33,6 +33,11 @@ import StatusBar from './components/StatusBar.jsx';
 import GuidePanel from './components/GuidePanel.jsx';
 import ViewCube from './components/ViewCube.jsx';
 import BoxSelectOverlay from './components/BoxSelectOverlay.jsx';
+import BeginnerModeToggle from './components/BeginnerModeToggle.jsx';
+import QuickStartCards from './components/QuickStartCards.jsx';
+import RightPanelTabs from './components/RightPanelTabs.jsx';
+import CommonToolsPanel from './components/CommonToolsPanel.jsx';
+import SelectionSizeInfo from './components/SelectionSizeInfo.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { applyCameraView, applyOrbitControlStyle, focusCameraOnBox as focusCameraOnBoxUtil, toggleCameraProjectionFov } from './utils/cameraUtils.js';
@@ -909,6 +914,8 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [selected, setSelected] = useState(null);
   const [activeWorkflow, setActiveWorkflow] = useState('model');
+  const [uiMode, setUiMode] = useState('beginner');
+  const [rightPanelTab, setRightPanelTab] = useState('properties');
   const [projectName, setProjectName] = useState('未命名模型');
   const [lastAutosave, setLastAutosave] = useState('');
   const [showGuide, setShowGuide] = useState(() => localStorage.getItem('printModeler.hideGuide') !== 'true');
@@ -957,6 +964,43 @@ export default function App() {
   const primarySelected = selectedObjects[0] || null;
   const selectedCheck = primarySelected ? printCheck(primarySelected, printerSize) : null;
   const printStats = useMemo(() => getPrintStats(objectsRef.current, printerSize), [objects, printerSize.x, printerSize.y, printerSize.z]);
+  const expertMode = uiMode === 'advanced';
+  const visibleWorkflowTabs = useMemo(() => (
+    expertMode ? WORKFLOW_TABS : WORKFLOW_TABS.filter((tab) => ['model', 'face', 'export'].includes(tab.key))
+  ), [expertMode]);
+  const selectionSizeInfo = useMemo(() => {
+    if (!selectedObjects.length) {
+      return {
+        title: '目前平台',
+        size: {
+          x: roundNumber(printerSize.x, 1),
+          y: roundNumber(printerSize.y, 1),
+          z: roundNumber(printerSize.z, 1),
+        },
+        caption: `場景中有 ${objects.length} 個物件`,
+      };
+    }
+    const box = new THREE.Box3();
+    selectedObjects.forEach((object) => box.union(getObjectBounds(object).box));
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    return {
+      title: selectedObjects.length > 1 ? '多選範圍尺寸' : '選取物件尺寸',
+      size: {
+        x: roundNumber(size.x, 1),
+        y: roundNumber(size.y, 1),
+        z: roundNumber(size.z, 1),
+      },
+      caption: selectedObjects.length > 1 ? `已選取 ${selectedObjects.length} 個物件` : primarySelected?.name || '已選取物件',
+    };
+  }, [selectedObjects, objects.length, printerSize.x, printerSize.y, printerSize.z, primarySelected]);
+  const basicPrintCheck = useMemo(() => ({
+    hasSelection: selectedObjects.length > 0,
+    objectCount: objects.length,
+    printerSize,
+    outside: selectedObjects.some((object) => printCheck(object, printerSize).outside),
+    floating: selectedObjects.some((object) => printCheck(object, printerSize).floating),
+  }), [selectedObjects, objects.length, printerSize]);
   const prefs = {
     operationStyle: 'blender',
     defaultCamera: 'perspective',
@@ -970,12 +1014,22 @@ export default function App() {
   cameraProjectionRef.current = cameraProjection;
 
   function switchWorkflow(nextWorkflow) {
+    if (uiMode === 'beginner' && ['sculpt', 'prep'].includes(nextWorkflow)) {
+      showToast('雕刻與修復工具在進階模式中使用');
+      return;
+    }
     setActiveWorkflow(nextWorkflow);
     activeWorkflowRef.current = nextWorkflow;
     if (nextWorkflow === 'face') setEditMode('face');
     else if (nextWorkflow === 'sculpt') setEditMode('sculpt');
     else setEditMode('object');
   }
+
+  useEffect(() => {
+    if (uiMode === 'beginner' && ['sculpt', 'prep'].includes(activeWorkflowRef.current)) {
+      switchWorkflow('model');
+    }
+  }, [uiMode]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -2137,6 +2191,65 @@ export default function App() {
     showToast('已建立範例場景，可以測試打洞、合併與匯出。');
   }
 
+  function createBeginnerBasicModel() {
+    addShape('cube');
+    showToast('已建立方塊，可以用 G / R / S 調整位置與大小');
+  }
+
+  function showImportModelStub() {
+    showToast('STL / OBJ 匯入尚未完成，請先使用左側基本形狀或載入專案 JSON');
+  }
+
+  function createStorageBoxStarter() {
+    pushHistory('create starter box');
+    detachSelectionGroup();
+    const color = '#38bdf8';
+    const wall = 3;
+    const width = 62;
+    const depth = 42;
+    const height = 24;
+    const parts = [
+      makeBox('盒子底板', { x: width, y: depth, z: wall }, new THREE.Color(color), { x: 0, y: 0, z: wall / 2 }),
+      makeBox('盒子左牆', { x: wall, y: depth, z: height }, new THREE.Color(color), { x: -width / 2 + wall / 2, y: 0, z: height / 2 }),
+      makeBox('盒子右牆', { x: wall, y: depth, z: height }, new THREE.Color(color), { x: width / 2 - wall / 2, y: 0, z: height / 2 }),
+      makeBox('盒子前牆', { x: width, y: wall, z: height }, new THREE.Color(color), { x: 0, y: -depth / 2 + wall / 2, z: height / 2 }),
+      makeBox('盒子後牆', { x: width, y: wall, z: height }, new THREE.Color(color), { x: 0, y: depth / 2 - wall / 2, z: height / 2 }),
+    ];
+    const reservedNames = [];
+    parts.forEach((part) => {
+      markPrintObject(part, getNextObjectName('cube', reservedNames), 'cube', { color, mode: 'solid' });
+      reservedNames.push(part.name);
+      objectsRef.current.push(part);
+      sceneRef.current.add(part);
+    });
+    objectCountRef.current += parts.length;
+    refreshObjects();
+    attachTransformForSelection(parts.map((part) => part.uuid));
+    switchWorkflow('model');
+    showToast('已建立簡易盒子，可調整尺寸或合併成單一模型');
+  }
+
+  function createTextSignStarter() {
+    pushHistory('create text sign');
+    detachSelectionGroup();
+    const baseColor = '#334155';
+    const textColor = '#facc15';
+    const base = makeBox('文字牌底板', { x: 72, y: 28, z: 3 }, new THREE.Color(baseColor), { x: 0, y: 0, z: 1.5 });
+    markPrintObject(base, getNextObjectName('cube'), 'cube', { color: baseColor, mode: 'solid' });
+    const text = createTextObject(objectCountRef.current, { text: 'TEXT', size: 12, depth: 2.5, align: 'center' });
+    text.name = getNextObjectName('text', [base.name]);
+    text.position.set(0, -6, 3.1);
+    text.userData.color = textColor;
+    applyModeAndColor(text, 'solid', textColor);
+    objectsRef.current.push(base, text);
+    sceneRef.current.add(base, text);
+    objectCountRef.current += 2;
+    refreshObjects();
+    attachTransformForSelection([base.uuid, text.uuid]);
+    switchWorkflow('model');
+    showToast('已建立文字牌範例，可在右側修改文字內容');
+  }
+
   async function copyDebugInfo() {
     const info = [
       `App version: ${APP_VERSION}`,
@@ -2287,6 +2400,10 @@ export default function App() {
     refreshObjects();
     attachTransformForSelection([source.uuid, ...clones.map((clone) => clone.uuid)]);
     showToast('已建立陣列複製');
+  }
+
+  function matrixDuplicateStub() {
+    showToast('複製矩陣尚未完整實作，請先使用「複製一排」建立線性陣列');
   }
 
   function resetCameraView() {
@@ -3268,6 +3385,7 @@ export default function App() {
           <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={loadProjectFile} />
           <button onClick={() => setShowPreferences((value) => !value)}>偏好設定</button>
         </div>
+        <BeginnerModeToggle value={uiMode} onChange={setUiMode} />
         <label className="switch-control">
           <input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />
           <span>{snapEnabled ? `吸附：${prefs.snapDistance} mm` : '吸附：關'}</span>
@@ -3281,7 +3399,7 @@ export default function App() {
       </TopToolbar>
 
       <nav className="workflow-tabs">
-        {WORKFLOW_TABS.map((tab) => {
+        {visibleWorkflowTabs.map((tab) => {
           const Icon = tab.icon;
           return (
             <button key={tab.key} className={activeWorkflow === tab.key ? 'active' : ''} onClick={() => switchWorkflow(tab.key)}>
@@ -3329,6 +3447,15 @@ export default function App() {
 
       <LeftPanel>
         <div className="brand compact-brand"><span className="brand-mark">mm</span><span>工具箱</span></div>
+        <CommonToolsPanel
+          disabled={!selectedIds.length}
+          onCenter={centerSelectedOnPlate}
+          onDrop={dropSelectedToPlate}
+          onRowDuplicate={arrayDuplicate}
+          onMatrixDuplicate={matrixDuplicateStub}
+          onSetHole={() => setSelectedMode('hole')}
+          onSetSolid={() => setSelectedMode('solid')}
+        />
         {activeWorkflow === 'model' ? (
           <>
             <div className="tool-section">
@@ -3367,11 +3494,11 @@ export default function App() {
         <ViewCube cameraProjection={cameraProjection} onView={setCameraView} onToggleProjection={toggleProjection} />
         <BoxSelectOverlay rect={boxSelectRect} mountRef={mountRef} />
         {!objects.length && (
-          <QuickStartCard
-            onAddCube={() => addShape('cube')}
-            onAddSphere={() => addShape('sphere')}
-            onOpenExample={createExampleScene}
-            onLoadProject={() => fileInputRef.current?.click()}
+          <QuickStartCards
+            onBasic={createBeginnerBasicModel}
+            onImport={showImportModelStub}
+            onBox={createStorageBoxStarter}
+            onTextSign={createTextSignStarter}
           />
         )}
       </section>
@@ -3392,6 +3519,121 @@ export default function App() {
         <section className="sidebar-section properties-section">
           <div className="sidebar-title"><span>屬性 / 工具設定</span><small>{selectedIds.length} 個已選取</small></div>
 
+          <RightPanelTabs activeTab={rightPanelTab} onTabChange={setRightPanelTab} expertMode={expertMode}>
+            {rightPanelTab === 'properties' && (
+              <div className="property-stack">
+                <SelectionSizeInfo info={selectionSizeInfo} />
+                <details className="accordion-panel" open>
+                  <summary>物件屬性</summary>
+                  <ObjectPropertiesPanel
+                    selected={selected}
+                    selectedObjects={selectedObjects}
+                    primarySelected={primarySelected}
+                    onUpdate={updateSelected}
+                    onSetMode={setSelectedMode}
+                    onToggleVisibility={toggleObjectVisibility}
+                    onToggleLock={toggleObjectLock}
+                    onDelete={deleteSelectedWithConfirm}
+                  />
+                </details>
+
+                {selected && (
+                  <details className="accordion-panel" open>
+                    <summary>變形與尺寸</summary>
+                    <TransformPanel
+                      selected={selected}
+                      transformSpace={transformSpace}
+                      onTransformSpaceChange={setTransformSpace}
+                      onUpdate={updateSelected}
+                      onApplyTransform={applySelectedTransform}
+                      onDropToPlate={dropSelectedToPlate}
+                      onCenterOnPlate={centerSelectedOnPlate}
+                    />
+                    {selected.shapeType === 'cube' && <BevelFields selected={selected} onChange={updateSelected} />}
+                    {selected.shapeType === 'text' && <TextFields selected={selected} onChange={updateSelected} />}
+                  </details>
+                )}
+
+                <details className="accordion-panel" open>
+                  <summary>常用建模工具</summary>
+                  <ObjectToolsPanel
+                    mode={mode}
+                    setMode={setMode}
+                    multiSelect={multiSelect}
+                    setMultiSelect={setMultiSelect}
+                    selectedCount={selectedIds.length}
+                    selectedObjects={selectedObjects}
+                    primarySelected={primarySelected}
+                    duplicateSelected={duplicateSelected}
+                    deleteSelected={deleteSelectedWithConfirm}
+                    centerSelectedOnPlate={centerSelectedOnPlate}
+                    dropSelectedToPlate={dropSelectedToPlate}
+                    setSelectedMode={setSelectedMode}
+                    mergeSelected={mergeSelected}
+                    applyHole={applyHole}
+                    mirrorSelected={mirrorSelected}
+                    alignSelected={alignSelected}
+                    arraySettings={arraySettings}
+                    setArraySettings={setArraySettings}
+                    arrayDuplicate={arrayDuplicate}
+                    groupSelected={groupSelected}
+                    ungroupSelected={ungroupSelected}
+                    createBooleanTest={createBooleanTest}
+                    measureActive={measureActive}
+                    setMeasureActive={setMeasureActive}
+                    measurePoints={measurePoints}
+                    clearMeasure={() => {
+                      setMeasurePoints([]);
+                      clearMeasureHelper();
+                    }}
+                  />
+                  {booleanMessage && <div className="notice">{booleanMessage}</div>}
+                </details>
+              </div>
+            )}
+
+            {rightPanelTab === 'check' && (
+              <BasicPrintCheckPanel check={basicPrintCheck} selectedCheck={selectedCheck} stats={printStats} />
+            )}
+
+            {rightPanelTab === 'repair' && (
+              expertMode ? (
+                <PrintPrepPanel
+                  settings={printPrepSettings}
+                  onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
+                  onSubdivide={subdivideSelectedModel}
+                  onSmooth={smoothSelectedModel}
+                  onRecalculate={recalculateSelectedNormals}
+                  onRemesh={remeshSelectedModel}
+                  onPlace={placeSelectedOnBed}
+                  onCenter={centerSelectedOnBed}
+                  onApplyTransform={applySelectedTransform}
+                  onCheck={checkSelectedMesh}
+                  planeCutSettings={planeCutSettings}
+                  onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
+                  onPlaneCut={applyPlaneCut}
+                  repairSettings={meshRepairSettings}
+                  onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
+                  onFindHoles={findSelectedHoles}
+                  onFillHoles={fillSelectedHoles}
+                  onMergeCloseVertices={mergeSelectedCloseVertices}
+                  onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
+                  onRemoveLooseFaces={removeSelectedLooseFaces}
+                  onAutoRepair={autoRepairSelectedMesh}
+                  repairResult={meshRepairResult}
+                  results={meshCheckResults}
+                  disabled={!primarySelected}
+                />
+              ) : (
+                <section className="printer-card">
+                  <div className="card-title">修復工具</div>
+                  <div className="notice">修復、雕刻、重新整理網格與表面方向工具屬於進階功能。請切換到「進階模式」後使用。</div>
+                </section>
+              )
+            )}
+          </RightPanelTabs>
+
+          <div className={`legacy-workflow-panels ${activeWorkflow === 'model' ? 'hidden' : ''}`}>
           {activeWorkflow === 'model' && (
             <div className="property-stack">
               <details className="accordion-panel" open>
@@ -3534,6 +3776,7 @@ export default function App() {
               checkResults={meshCheckResults}
             />
           )}
+          </div>
         </section>
       </RightPanel>
       <StatusBar
@@ -4118,6 +4361,30 @@ function MiniNumber({ label, value, onChange }) {
       <span>{label}</span>
       <input type="number" min="0.5" step="1" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
+  );
+}
+
+function BasicPrintCheckPanel({ check, selectedCheck, stats }) {
+  return (
+    <div className="property-stack">
+      <section className="printer-card">
+        <div className="card-title">列印檢查</div>
+        <StatusRow label="是否有選取物件" ok={check.hasSelection} badText="尚未選取物件" goodText="已有選取物件" />
+        <StatusRow label="是否超出平台" ok={!check.outside} badText="選取物件超出平台" goodText="未超出平台" />
+        <StatusRow label="是否懸空" ok={!check.floating} badText="選取物件可能懸空" goodText="未偵測到懸空" />
+        <div className="dimension-readout">
+          <span>物件數量：{check.objectCount}</span>
+          <span>平台尺寸：{check.printerSize.x} × {check.printerSize.y} × {check.printerSize.z} mm</span>
+        </div>
+      </section>
+      {selectedCheck ? (
+        <PrintCheckPanel check={selectedCheck} stats={stats} />
+      ) : (
+        <section className="printer-card">
+          <div className="empty-state compact"><Move3D size={28} /><p>請選擇一個物件以查看尺寸與列印狀態。</p></div>
+        </section>
+      )}
+    </div>
   );
 }
 
