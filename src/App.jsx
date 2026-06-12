@@ -667,6 +667,11 @@ function readTransform(object) {
       y: roundNumber(size.y),
       z: roundNumber(size.z),
     },
+    scale: {
+      x: roundNumber(object.scale.x),
+      y: roundNumber(object.scale.y),
+      z: roundNumber(object.scale.z),
+    },
   };
 }
 
@@ -2424,6 +2429,7 @@ export default function App() {
       pushHistory(path);
       if (path === 'rotation') target.rotation[axis] = THREE.MathUtils.degToRad(next);
       else if (path === 'position') target.position[axis] = next;
+      else if (path === 'scale') target.scale[axis] = Math.max(0.01, next);
       else if (path === 'dimensions') {
         const current = getObjectBounds(target).size[axis];
         if (current > 0) target.scale[axis] *= Math.max(0.5, next) / current;
@@ -3092,142 +3098,145 @@ export default function App() {
 
         <section className="sidebar-section properties-section">
           <div className="sidebar-title"><span>屬性 / 工具設定</span><small>{selectedIds.length} 個已選取</small></div>
-          <details className="accordion-panel" open>
-            <summary>列印平台</summary>
-            <div className="platform-size">{printerSize.x} x {printerSize.y} x {printerSize.z} mm</div>
-            {printerKey === 'custom' && (
-              <TransformFields title="自訂尺寸" unit="mm" data={customSize} onChange={(axis, value) => setCustomSize((size) => ({ ...size, [axis]: Math.max(10, Number(value) || 10) }))} step="1" />
-            )}
-          </details>
 
-          {activeWorkflow === 'prep' ? (
-            <details className="accordion-panel" open>
-              <summary>列印修復 / 網格修復</summary>
-              <PrintPrepPanel
-                settings={printPrepSettings}
-                onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
-                onSubdivide={subdivideSelectedModel}
-                onSmooth={smoothSelectedModel}
-                onRecalculate={recalculateSelectedNormals}
-                onRemesh={remeshSelectedModel}
-                onPlace={placeSelectedOnBed}
-                onCenter={centerSelectedOnBed}
-                onApplyTransform={applySelectedTransform}
-                onCheck={checkSelectedMesh}
-                planeCutSettings={planeCutSettings}
-                onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
-                onPlaneCut={applyPlaneCut}
-                repairSettings={meshRepairSettings}
-                onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
-                onFindHoles={findSelectedHoles}
-                onFillHoles={fillSelectedHoles}
-                onMergeCloseVertices={mergeSelectedCloseVertices}
-                onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
-                onRemoveLooseFaces={removeSelectedLooseFaces}
-                onAutoRepair={autoRepairSelectedMesh}
-                repairResult={meshRepairResult}
-                results={meshCheckResults}
-                disabled={!primarySelected}
-              />
-            </details>
-          ) : activeWorkflow === 'export' ? (
-            <details className="accordion-panel" open>
-              <summary>匯出</summary>
-              <ExportPanel
-                onExportStl={() => exportModel('stl')}
-                onExportObj={() => exportModel('obj')}
-                onSave={saveProject}
-                onLoad={() => fileInputRef.current?.click()}
-                hasObjects={objects.length > 0}
-                checkResults={meshCheckResults}
-              />
-            </details>
-          ) : activeWorkflow === 'face' ? (
-            <details className="accordion-panel" open>
-              <summary>面編輯</summary>
-              <FaceEditPanel
-                faceSelection={faceSelection}
-                settings={faceSettings}
-                onSettingChange={(key, value) => setFaceSettings((settings) => ({ ...settings, [key]: value }))}
-                onPull={() => moveSelectedFace(1)}
-                onPush={() => moveSelectedFace(-1)}
-                onExtrude={() => extrudeSelectedFace(1)}
-                onReverseExtrude={() => extrudeSelectedFace(-1)}
-                onInsetExtrude={insetExtrudeSelectedFace}
-                onSmooth={smoothSelectedFace}
-              />
-            </details>
-          ) : activeWorkflow === 'sculpt' ? (
-            <details className="accordion-panel" open>
-              <summary>雕刻筆刷</summary>
-              <SculptPanel
-                settings={sculptSettings}
-                onSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
-                hasSelection={!!primarySelected}
-              />
-            </details>
-          ) : selected ? (
+          {activeWorkflow === 'model' && (
             <div className="property-stack">
-            <details className="accordion-panel" open>
-              <summary>物件屬性</summary>
-            <label className="field"><span>名稱</span><input value={primarySelected?.name || selected.name} onChange={(event) => updateSelected('name', null, event.target.value)} /></label>
-            <div className="row-fields">
-              <label className="field"><span>物件模式</span><select value={primarySelected?.userData.mode || 'solid'} onChange={(event) => updateSelected('mode', null, event.target.value)}><option value="solid">實體</option><option value="hole">挖洞</option></select></label>
-              <label className="field"><span>顏色</span><input type="color" value={primarySelected?.userData.color || '#38bdf8'} onChange={(event) => updateSelected('color', null, event.target.value)} /></label>
+              <details className="accordion-panel" open>
+                <summary>物件屬性</summary>
+                <ObjectPropertiesPanel
+                  selected={selected}
+                  selectedObjects={selectedObjects}
+                  primarySelected={primarySelected}
+                  onUpdate={updateSelected}
+                  onSetMode={setSelectedMode}
+                  onToggleVisibility={toggleObjectVisibility}
+                  onToggleLock={toggleObjectLock}
+                  onDelete={deleteSelectedWithConfirm}
+                />
+              </details>
+
+              {selected && (
+                <>
+                  <details className="accordion-panel" open>
+                    <summary>變形</summary>
+                    <TransformPanel
+                      selected={selected}
+                      onUpdate={updateSelected}
+                      onApplyTransform={applySelectedTransform}
+                      onDropToPlate={dropSelectedToPlate}
+                      onCenterOnPlate={centerSelectedOnPlate}
+                    />
+                    {selected.shapeType === 'cube' && <BevelFields selected={selected} onChange={updateSelected} />}
+                    {selected.shapeType === 'text' && <TextFields selected={selected} onChange={updateSelected} />}
+                  </details>
+
+                  <details className="accordion-panel">
+                    <summary>物件工具</summary>
+                    <ObjectToolsPanel
+                      mode={mode}
+                      setMode={setMode}
+                      multiSelect={multiSelect}
+                      setMultiSelect={setMultiSelect}
+                      selectedCount={selectedIds.length}
+                      selectedObjects={selectedObjects}
+                      primarySelected={primarySelected}
+                      duplicateSelected={duplicateSelected}
+                      deleteSelected={deleteSelectedWithConfirm}
+                      centerSelectedOnPlate={centerSelectedOnPlate}
+                      dropSelectedToPlate={dropSelectedToPlate}
+                      setSelectedMode={setSelectedMode}
+                      mergeSelected={mergeSelected}
+                      applyHole={applyHole}
+                      mirrorSelected={mirrorSelected}
+                      alignSelected={alignSelected}
+                      arraySettings={arraySettings}
+                      setArraySettings={setArraySettings}
+                      arrayDuplicate={arrayDuplicate}
+                      groupSelected={groupSelected}
+                      ungroupSelected={ungroupSelected}
+                      createBooleanTest={createBooleanTest}
+                      measureActive={measureActive}
+                      setMeasureActive={setMeasureActive}
+                      measurePoints={measurePoints}
+                      clearMeasure={() => {
+                        setMeasurePoints([]);
+                        clearMeasureHelper();
+                      }}
+                    />
+                    {booleanMessage && <div className="notice">{booleanMessage}</div>}
+                  </details>
+
+                  <details className="accordion-panel">
+                    <summary>列印檢查</summary>
+                    <PrintCheckPanel check={selectedCheck} stats={printStats} />
+                  </details>
+                </>
+              )}
             </div>
-            </details>
-            <details className="accordion-panel" open>
-              <summary>物件工具</summary>
-            <ObjectToolsPanel
-              mode={mode}
-              setMode={setMode}
-              multiSelect={multiSelect}
-              setMultiSelect={setMultiSelect}
-              selectedCount={selectedIds.length}
-              selectedObjects={selectedObjects}
-              primarySelected={primarySelected}
-              duplicateSelected={duplicateSelected}
-              deleteSelected={deleteSelectedWithConfirm}
-              centerSelectedOnPlate={centerSelectedOnPlate}
-              dropSelectedToPlate={dropSelectedToPlate}
-              setSelectedMode={setSelectedMode}
-              mergeSelected={mergeSelected}
-              applyHole={applyHole}
-              mirrorSelected={mirrorSelected}
-              alignSelected={alignSelected}
-              arraySettings={arraySettings}
-              setArraySettings={setArraySettings}
-              arrayDuplicate={arrayDuplicate}
-              groupSelected={groupSelected}
-              ungroupSelected={ungroupSelected}
-              createBooleanTest={createBooleanTest}
-              measureActive={measureActive}
-              setMeasureActive={setMeasureActive}
-              measurePoints={measurePoints}
-              clearMeasure={() => {
-                setMeasurePoints([]);
-                clearMeasureHelper();
-              }}
+          )}
+
+          {activeWorkflow === 'face' && (
+            <FaceEditPanel
+              faceSelection={faceSelection}
+              settings={faceSettings}
+              onSettingChange={(key, value) => setFaceSettings((settings) => ({ ...settings, [key]: value }))}
+              onPull={() => moveSelectedFace(1)}
+              onPush={() => moveSelectedFace(-1)}
+              onExtrude={() => extrudeSelectedFace(1)}
+              onReverseExtrude={() => extrudeSelectedFace(-1)}
+              onInsetExtrude={insetExtrudeSelectedFace}
+              onSmooth={smoothSelectedFace}
             />
-            <div className="notice">挖洞物件不會被列印，只用來切掉實體。</div>
-            </details>
-            <details className="accordion-panel" open>
-              <summary>變形</summary>
-            <TransformFields title="位置" unit="mm" data={selected.position} onChange={(axis, value) => updateSelected('position', axis, value)} />
-            <TransformFields title="旋轉" unit="deg" data={selected.rotation} onChange={(axis, value) => updateSelected('rotation', axis, value)} step="15" />
-            <TransformFields title="實際尺寸" unit="mm" data={selected.dimensions} onChange={(axis, value) => updateSelected('dimensions', axis, value)} step="1" labels={{ x: '寬 X', y: '深 Y', z: '高 Z' }} />
-            {selected.shapeType === 'cube' && <BevelFields selected={selected} onChange={updateSelected} />}
-            {selected.shapeType === 'text' && <TextFields selected={selected} onChange={updateSelected} />}
-            {booleanMessage && <div className="notice">{booleanMessage}</div>}
-            </details>
-            <details className="accordion-panel">
-              <summary>列印檢查</summary>
-            <PrintCheckPanel check={selectedCheck} stats={printStats} />
-            </details>
-          </div>
-        ) : (
-          <div className="empty-state"><Move3D size={32} /><p>請選取物件</p></div>
-        )}
+          )}
+
+          {activeWorkflow === 'sculpt' && (
+            <SculptPanel
+              settings={sculptSettings}
+              onSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
+              hasSelection={!!primarySelected}
+            />
+          )}
+
+          {activeWorkflow === 'prep' && (
+            <PrintPrepPanel
+              settings={printPrepSettings}
+              onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
+              onSubdivide={subdivideSelectedModel}
+              onSmooth={smoothSelectedModel}
+              onRecalculate={recalculateSelectedNormals}
+              onRemesh={remeshSelectedModel}
+              onPlace={placeSelectedOnBed}
+              onCenter={centerSelectedOnBed}
+              onApplyTransform={applySelectedTransform}
+              onCheck={checkSelectedMesh}
+              planeCutSettings={planeCutSettings}
+              onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
+              onPlaneCut={applyPlaneCut}
+              repairSettings={meshRepairSettings}
+              onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
+              onFindHoles={findSelectedHoles}
+              onFillHoles={fillSelectedHoles}
+              onMergeCloseVertices={mergeSelectedCloseVertices}
+              onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
+              onRemoveLooseFaces={removeSelectedLooseFaces}
+              onAutoRepair={autoRepairSelectedMesh}
+              repairResult={meshRepairResult}
+              results={meshCheckResults}
+              disabled={!primarySelected}
+            />
+          )}
+
+          {activeWorkflow === 'export' && (
+            <ExportPanel
+              onCheck={checkSelectedMesh}
+              onExportStl={() => exportModel('stl')}
+              onExportObj={() => exportModel('obj')}
+              onSave={saveProject}
+              onLoad={() => fileInputRef.current?.click()}
+              hasObjects={objects.length > 0}
+              checkResults={meshCheckResults}
+            />
+          )}
         </section>
       </RightPanel>
       <StatusBar
@@ -3273,10 +3282,84 @@ function TransformFields({ title, data, onChange, step = '0.1', unit, labels = {
       {axes.map((axis) => (
         <label key={axis} className="axis-field">
           <span>{labels[axis]} {unit}</span>
-          <input type="number" step={step} value={data[axis]} onChange={(event) => onChange(axis, event.target.value)} />
+          <input type="number" step={step} value={data?.[axis] ?? 0} onChange={(event) => onChange(axis, event.target.value)} />
         </label>
       ))}
     </fieldset>
+  );
+}
+
+function ObjectPropertiesPanel({ selected, selectedObjects, primarySelected, onUpdate, onSetMode, onToggleVisibility, onToggleLock, onDelete }) {
+  const selectedCount = selectedObjects.length;
+  if (!selectedCount) {
+    return <div className="empty-state compact"><Move3D size={28} /><p>請選取一個物件以編輯屬性</p></div>;
+  }
+
+  if (selectedCount > 1) {
+    return (
+      <section className="printer-card object-properties-card">
+        <div className="card-title">已選取 {selectedCount} 個物件</div>
+        <div className="notice">多選時只顯示可批量操作的工具。</div>
+        <div className="prep-grid">
+          <button onClick={() => onSetMode('solid')}>設為實體</button>
+          <button onClick={() => onSetMode('hole')}>設為挖洞</button>
+          <button onClick={() => selectedObjects.forEach((object) => { if (object.visible) onToggleVisibility(object); })}>隱藏</button>
+          <button onClick={() => selectedObjects.forEach((object) => { if (!object.userData.locked) onToggleLock(object); })}>鎖定</button>
+          <button className="danger" onClick={onDelete}>刪除</button>
+        </div>
+      </section>
+    );
+  }
+
+  const typeLabel = SHAPES[selected.shapeType]?.label || (selected.shapeType === 'boolean' ? '布林結果' : selected.shapeType === 'group' ? '群組' : '自訂模型');
+  return (
+    <section className="printer-card object-properties-card">
+      <label className="field"><span>名稱</span><input value={primarySelected?.name || selected.name} onChange={(event) => onUpdate('name', null, event.target.value)} /></label>
+      <div className="info-grid">
+        <span>類型</span><strong>{typeLabel}</strong>
+        <span>狀態</span><strong>{primarySelected?.visible === false ? '隱藏' : '可見'} / {primarySelected?.userData.locked ? '鎖定' : '解鎖'}</strong>
+      </div>
+      <div className="row-fields">
+        <label className="field">
+          <span>模式</span>
+          <select value={primarySelected?.userData.mode || 'solid'} onChange={(event) => onUpdate('mode', null, event.target.value)}>
+            <option value="solid">實體</option>
+            <option value="hole">挖洞</option>
+          </select>
+        </label>
+        <label className="field"><span>顏色</span><input type="color" value={primarySelected?.userData.color || '#38bdf8'} onChange={(event) => onUpdate('color', null, event.target.value)} /></label>
+      </div>
+      <div className="prep-grid">
+        <button onClick={() => onToggleVisibility(primarySelected)}>{primarySelected?.visible === false ? '顯示' : '隱藏'}</button>
+        <button onClick={() => onToggleLock(primarySelected)}>{primarySelected?.userData.locked ? '解鎖' : '鎖定'}</button>
+      </div>
+    </section>
+  );
+}
+
+function TransformPanel({ selected, onUpdate, onApplyTransform, onDropToPlate, onCenterOnPlate }) {
+  return (
+    <section className="printer-card transform-card">
+      <TransformFields title="位置 Position" unit="mm" data={selected.position} onChange={(axis, value) => onUpdate('position', axis, value)} />
+      <TransformFields title="旋轉 Rotation" unit="deg" data={selected.rotation} onChange={(axis, value) => onUpdate('rotation', axis, value)} step="15" />
+      <TransformFields title="尺寸 Size" unit="mm" data={selected.dimensions} onChange={(axis, value) => onUpdate('dimensions', axis, value)} step="1" labels={{ x: '寬 X', y: '深 Y', z: '高 Z' }} />
+      <TransformFields title="縮放 Scale" data={selected.scale} onChange={(axis, value) => onUpdate('scale', axis, value)} step="0.05" />
+      <div className="prep-grid">
+        <button onClick={onApplyTransform}>套用變形</button>
+        <button onClick={onDropToPlate}>貼齊平台</button>
+        <button onClick={onCenterOnPlate}>置中到平台</button>
+      </div>
+    </section>
+  );
+}
+
+function ToolGroup({ title, hint, children }) {
+  return (
+    <section className="tool-subgroup">
+      <h4>{title}</h4>
+      {hint && <p>{hint}</p>}
+      {children}
+    </section>
   );
 }
 
@@ -3290,8 +3373,6 @@ function ObjectToolsPanel({
   primarySelected,
   duplicateSelected,
   deleteSelected,
-  centerSelectedOnPlate,
-  dropSelectedToPlate,
   setSelectedMode,
   mergeSelected,
   applyHole,
@@ -3316,6 +3397,7 @@ function ObjectToolsPanel({
   const canMerge = solidCount >= 2;
   const canBoolean = solidCount >= 1 && holeCount >= 1;
   const canUngroup = !!primarySelected?.isGroup;
+
   return (
     <section className="printer-card object-tools-card">
       <div className="card-title">物件工具</div>
@@ -3325,81 +3407,96 @@ function ObjectToolsPanel({
           return <button key={item.mode} className={mode === item.mode ? 'active' : ''} onClick={() => setMode(item.mode)} title={item.label}><Icon size={18} /></button>;
         })}
       </div>
-      <div className="prep-grid">
-        <button onClick={() => setMultiSelect((value) => !value)} className={multiSelect ? 'active' : ''}>多選</button>
-        <button onClick={duplicateSelected} disabled={!selectedCount}><Copy size={14} /> 複製</button>
-        <button onClick={deleteSelected} disabled={!selectedCount}>刪除</button>
-        <button onClick={centerSelectedOnPlate} disabled={!selectedCount}>置中</button>
-        <button onClick={dropSelectedToPlate} disabled={!selectedCount}>貼齊平台</button>
-        <button onClick={groupSelected} disabled={!canGroup} title={canGroup ? '將選取物件建立成群組' : '請至少選取 2 個物件才能群組'}>群組</button>
-        <button onClick={ungroupSelected} disabled={!canUngroup} title={canUngroup ? '取消目前群組' : '請選取群組'}>取消群組</button>
-        <button onClick={mergeSelected} disabled={!canMerge} title={canMerge ? '合併選取的實體物件' : '請至少選取 2 個實體物件才能合併'}>合併</button>
-        <button onClick={() => setMeasureActive((value) => !value)} className={measureActive ? 'active' : ''}>測量</button>
-        <button onClick={() => setSelectedMode('solid')} disabled={!selectedCount}>設為實體</button>
-        <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount}>設為挖洞</button>
-        <button onClick={applyHole} disabled={!canBoolean} title={canBoolean ? '使用挖洞物件切割實體' : '請選取至少 1 個實體與 1 個挖洞物件'}>套用打洞</button>
-        {import.meta.env.DEV && <button onClick={createBooleanTest}>建立打洞測試</button>}
-      </div>
-      <div className="notice">測量：開啟後在模型表面點兩個點，即可量測直線距離。</div>
-      {measurePoints.length > 0 && (
-        <div className="dimension-readout">
-          <span>A：{measurePoints[0] ? `${roundNumber(measurePoints[0].x)} / ${roundNumber(measurePoints[0].y)} / ${roundNumber(measurePoints[0].z)} mm` : '-'}</span>
-          <span>B：{measurePoints[1] ? `${roundNumber(measurePoints[1].x)} / ${roundNumber(measurePoints[1].y)} / ${roundNumber(measurePoints[1].z)} mm` : '-'}</span>
-          <span>距離：{distance == null ? '-' : `${roundNumber(distance)} mm`}</span>
-          <button className="wide-action" onClick={clearMeasure}>清除測量</button>
+
+      <ToolGroup title="基本操作">
+        <div className="prep-grid">
+          <button onClick={() => setMultiSelect((value) => !value)} className={multiSelect ? 'active' : ''}>多選</button>
+          <button onClick={duplicateSelected} disabled={!selectedCount} title={!selectedCount ? '請先選取物件' : '複製選取物件'}><Copy size={14} /> 複製</button>
+          <button className="danger" onClick={deleteSelected} disabled={!selectedCount} title={!selectedCount ? '請先選取物件' : '刪除選取物件'}>刪除</button>
+          <button onClick={groupSelected} disabled={!canGroup} title={canGroup ? '將選取物件建立成群組' : '請至少選取 2 個物件才能群組'}>群組</button>
+          <button onClick={ungroupSelected} disabled={!canUngroup} title={canUngroup ? '取消目前群組' : '請選取群組'}>取消群組</button>
         </div>
-      )}
-      <div className="mini-grid">
-        <button onClick={() => mirrorSelected('x')} disabled={!selectedCount}>X 鏡像</button>
-        <button onClick={() => mirrorSelected('y')} disabled={!selectedCount}>Y 鏡像</button>
-        <button onClick={() => mirrorSelected('z')} disabled={!selectedCount}>Z 鏡像</button>
-        <button onClick={() => alignSelected('x', 'min')} disabled={selectedCount < 2}>X 左</button>
-        <button onClick={() => alignSelected('x', 'center')} disabled={selectedCount < 2}>X 中</button>
-        <button onClick={() => alignSelected('x', 'max')} disabled={selectedCount < 2}>X 右</button>
-        <button onClick={() => alignSelected('y', 'min')} disabled={selectedCount < 2}>Y 前</button>
-        <button onClick={() => alignSelected('y', 'center')} disabled={selectedCount < 2}>Y 中</button>
-        <button onClick={() => alignSelected('y', 'max')} disabled={selectedCount < 2}>Y 後</button>
-        <button onClick={() => alignSelected('z', 'min')} disabled={selectedCount < 2}>Z 底</button>
-        <button onClick={() => alignSelected('z', 'center')} disabled={selectedCount < 2}>Z 中</button>
-        <button onClick={() => alignSelected('z', 'max')} disabled={selectedCount < 2}>Z 頂</button>
-      </div>
-      <div className="row-fields">
-        <MiniNumber label="陣列數量" value={arraySettings.count} onChange={(value) => setArraySettings((settings) => ({ ...settings, count: value }))} />
-        <MiniNumber label="X 間距" value={arraySettings.x} onChange={(value) => setArraySettings((settings) => ({ ...settings, x: value }))} />
-      </div>
-      <div className="row-fields">
-        <MiniNumber label="Y 間距" value={arraySettings.y} onChange={(value) => setArraySettings((settings) => ({ ...settings, y: value }))} />
-        <MiniNumber label="Z 間距" value={arraySettings.z} onChange={(value) => setArraySettings((settings) => ({ ...settings, z: value }))} />
-      </div>
-      <button className="wide-action" onClick={arrayDuplicate} disabled={!selectedCount}>建立陣列複製</button>
+      </ToolGroup>
+
+      <ToolGroup title="布林 / 合併" hint="合併會將多個實體物件合成一個模型；套用打洞會使用挖洞物件切掉實體物件重疊區域。">
+        <div className="prep-grid">
+          <button onClick={mergeSelected} disabled={!canMerge} title={canMerge ? '合併選取的實體物件' : '請至少選取 2 個實體物件才能合併'}>合併</button>
+          <button className="primary-action" onClick={applyHole} disabled={!canBoolean} title={canBoolean ? '使用挖洞物件切割實體' : '請選取至少 1 個實體與 1 個挖洞物件'}>套用打洞</button>
+          <button onClick={() => setSelectedMode('solid')} disabled={!selectedCount}>設為實體</button>
+          <button onClick={() => setSelectedMode('hole')} disabled={!selectedCount}>設為挖洞</button>
+          {import.meta.env.DEV && <button onClick={createBooleanTest}>建立打洞測試</button>}
+        </div>
+      </ToolGroup>
+
+      <ToolGroup title="排列">
+        <div className="mini-grid">
+          <button onClick={() => mirrorSelected('x')} disabled={!selectedCount}>X 鏡像</button>
+          <button onClick={() => mirrorSelected('y')} disabled={!selectedCount}>Y 鏡像</button>
+          <button onClick={() => mirrorSelected('z')} disabled={!selectedCount}>Z 鏡像</button>
+          <button onClick={() => alignSelected('x', 'min')} disabled={selectedCount < 2}>X 左</button>
+          <button onClick={() => alignSelected('x', 'center')} disabled={selectedCount < 2}>X 中</button>
+          <button onClick={() => alignSelected('x', 'max')} disabled={selectedCount < 2}>X 右</button>
+          <button onClick={() => alignSelected('y', 'min')} disabled={selectedCount < 2}>Y 前</button>
+          <button onClick={() => alignSelected('y', 'center')} disabled={selectedCount < 2}>Y 中</button>
+          <button onClick={() => alignSelected('y', 'max')} disabled={selectedCount < 2}>Y 後</button>
+          <button onClick={() => alignSelected('z', 'min')} disabled={selectedCount < 2}>Z 底</button>
+          <button onClick={() => alignSelected('z', 'center')} disabled={selectedCount < 2}>Z 中</button>
+          <button onClick={() => alignSelected('z', 'max')} disabled={selectedCount < 2}>Z 頂</button>
+        </div>
+        <div className="row-fields">
+          <MiniNumber label="陣列數量" value={arraySettings.count} onChange={(value) => setArraySettings((settings) => ({ ...settings, count: value }))} />
+          <MiniNumber label="X 間距" value={arraySettings.x} onChange={(value) => setArraySettings((settings) => ({ ...settings, x: value }))} />
+        </div>
+        <div className="row-fields">
+          <MiniNumber label="Y 間距" value={arraySettings.y} onChange={(value) => setArraySettings((settings) => ({ ...settings, y: value }))} />
+          <MiniNumber label="Z 間距" value={arraySettings.z} onChange={(value) => setArraySettings((settings) => ({ ...settings, z: value }))} />
+        </div>
+        <button className="wide-action" onClick={arrayDuplicate} disabled={!selectedCount}>陣列複製</button>
+      </ToolGroup>
+
+      <ToolGroup title="測量" hint="開啟後在模型表面點兩個點，即可量測直線距離。">
+        <div className="prep-grid">
+          <button onClick={() => setMeasureActive((value) => !value)} className={measureActive ? 'active' : ''}>開啟測量</button>
+          <button onClick={clearMeasure}>清除測量</button>
+        </div>
+        {measurePoints.length > 0 && (
+          <div className="dimension-readout">
+            <span>A：{measurePoints[0] ? `${roundNumber(measurePoints[0].x)} / ${roundNumber(measurePoints[0].y)} / ${roundNumber(measurePoints[0].z)} mm` : '-'}</span>
+            <span>B：{measurePoints[1] ? `${roundNumber(measurePoints[1].x)} / ${roundNumber(measurePoints[1].y)} / ${roundNumber(measurePoints[1].z)} mm` : '-'}</span>
+            <span>距離：{distance == null ? '-' : `${roundNumber(distance)} mm`}</span>
+          </div>
+        )}
+      </ToolGroup>
     </section>
   );
 }
 
-function ExportPanel({ onExportStl, onExportObj, onSave, onLoad, hasObjects, checkResults }) {
+function ExportPanel({ onCheck, onExportStl, onExportObj, onSave, onLoad, hasObjects, checkResults }) {
   const hasIssue = checkResults?.some((item) => item.status !== 'ok');
   return (
     <div className="property-stack">
-      <section className="printer-card export-card">
-        <div className="card-title">匯出</div>
-        <div className="notice">匯出 STL 前會自動檢查模型；如果有警告或錯誤，會先詢問是否仍要匯出。</div>
-        <div className="export-steps">
-          <strong>建議流程</strong>
-          <ol>
-            <li>套用變形</li>
-            <li>置於平台</li>
-            <li>檢查模型</li>
-            <li>匯出 STL</li>
-          </ol>
-        </div>
-        {hasIssue && <div className="notice warning-note">目前檢查結果有警告或錯誤，建議先到列印修復處理。</div>}
-        <div className="prep-grid">
-          <button onClick={onExportStl} disabled={!hasObjects}><Download size={14} /> 匯出 STL</button>
-          <button onClick={onExportObj} disabled={!hasObjects}><Download size={14} /> 匯出 OBJ</button>
-          <button onClick={onSave}>儲存 JSON</button>
-          <button onClick={onLoad}>載入 JSON</button>
-        </div>
-      </section>
+      <details className="accordion-panel" open>
+        <summary>匯出檔案</summary>
+        <section className="printer-card export-card">
+          <div className="export-steps">
+            <strong>建議順序</strong>
+            <ol>
+              <li>套用變形</li>
+              <li>貼齊平台</li>
+              <li>檢查模型</li>
+              <li>匯出 STL</li>
+            </ol>
+          </div>
+          {hasIssue && <div className="notice warning-note">目前檢查結果有警告或錯誤，建議先到列印修復處理。</div>}
+          <div className="prep-grid">
+            <button onClick={onCheck} disabled={!hasObjects}>檢查模型</button>
+            <button className="primary-action" onClick={onExportStl} disabled={!hasObjects}><Download size={14} /> 匯出 STL</button>
+            <button onClick={onExportObj} disabled={!hasObjects}><Download size={14} /> 匯出 OBJ</button>
+            <button onClick={onSave}>儲存專案 JSON</button>
+            <button onClick={onLoad}>載入專案 JSON</button>
+          </div>
+        </section>
+      </details>
     </div>
   );
 }
@@ -3431,140 +3528,143 @@ function PrintPrepPanel({
   disabled,
 }) {
   return (
-    <section className="printer-card print-prep-card">
-      <div className="card-title">列印準備</div>
-      {disabled && <div className="notice warning-note">請先選取要處理的物件。</div>}
-      <div className="row-fields">
-        <label className="field">
-          <span>細分次數</span>
-          <select value={settings.subdivideIterations} onChange={(event) => onSettingChange('subdivideIterations', Number(event.target.value))}>
-            <option value={1}>1</option>
-            <option value={2}>2</option>
-          </select>
-        </label>
-        <label className="field"><span>平滑強度</span><input type="number" min="0.1" max="1" step="0.1" value={settings.smoothStrength} onChange={(event) => onSettingChange('smoothStrength', event.target.value)} /></label>
-      </div>
-      <label className="field"><span>平滑次數</span><input type="number" min="1" max="10" step="1" value={settings.smoothIterations} onChange={(event) => onSettingChange('smoothIterations', event.target.value)} /></label>
-      <div className="notice">Remesh 簡化版：讓網格更平均，適合雕刻前整理。</div>
-      <div className="row-fields">
-        <label className="field"><span>目標邊長 mm</span><input type="number" min="0.5" step="0.5" value={settings.remeshEdgeLength} onChange={(event) => onSettingChange('remeshEdgeLength', event.target.value)} /></label>
-        <label className="mini-check toggle-line">
-          <input type="checkbox" checked={settings.remeshKeepVolume} onChange={(event) => onSettingChange('remeshKeepVolume', event.target.checked)} />
-          <span>保持體積</span>
-        </label>
-      </div>
-      <div className="prep-grid">
-        <button onClick={onSubdivide} disabled={disabled}>套用細分</button>
-        <button onClick={onSmooth} disabled={disabled}>平滑模型</button>
-        <button onClick={onRemesh} disabled={disabled}>Remesh</button>
-        <button onClick={onRecalculate} disabled={disabled}>重新計算法線</button>
-        <button onClick={onPlace} disabled={disabled}>置於平台</button>
-        <button onClick={onCenter} disabled={disabled}>居中到平台</button>
-        <button onClick={onApplyTransform} disabled={disabled}>套用變形</button>
-      </div>
-      <section className="nested-tool">
-        <div className="card-title">Plane Cut</div>
-        <div className="row-fields">
-          <label className="field"><span>裁切軸</span><select value={planeCutSettings.axis} onChange={(event) => onPlaneCutSettingChange('axis', event.target.value)}><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select></label>
-          <label className="field"><span>位置 mm</span><input type="number" step="1" value={planeCutSettings.position} onChange={(event) => onPlaneCutSettingChange('position', event.target.value)} /></label>
-        </div>
-        <label className="field"><span>保留方向</span><select value={planeCutSettings.keep} onChange={(event) => onPlaneCutSettingChange('keep', event.target.value)}><option value="positive">正向</option><option value="negative">負向</option></select></label>
-        <button className="wide-action" onClick={onPlaneCut} disabled={disabled}>套用裁切</button>
-      </section>
-      <section className="nested-tool">
-        <div className="card-title">Mesh Repair</div>
-        <label className="field">
-          <span>Merge tolerance mm</span>
-          <input type="number" min="0.0001" step="0.001" value={repairSettings.tolerance} onChange={(event) => onRepairSettingChange('tolerance', event.target.value)} />
-        </label>
-        <div className="prep-grid">
-          <button onClick={onFindHoles} disabled={disabled}>尋找破洞</button>
-          <button onClick={onFillHoles} disabled={disabled}>補洞</button>
-          <button onClick={onMergeCloseVertices} disabled={disabled}>Merge Close Vertices</button>
-          <button onClick={onRemoveDegenerateFaces} disabled={disabled}>Remove Degenerate Faces</button>
-          <button onClick={onRemoveLooseFaces} disabled={disabled}>Remove Loose Faces</button>
-          <button onClick={onRecalculate} disabled={disabled}>Recalculate Normals</button>
-          <button onClick={onAutoRepair} disabled={disabled}>自動修復</button>
-        </div>
-        {repairResult && (
-          <div className="mesh-repair-results">
-            <div className={`mesh-check-item ${repairResult.holeCount ? 'warning' : 'ok'}`}>
-              <span>{repairResult.holeCount ? '⚠️' : '✅'}</span>
-              <strong>破洞數量</strong>
-              <p>{repairResult.holeCount}</p>
-            </div>
-            <div className={`mesh-check-item ${repairResult.boundaryEdgeCount ? 'warning' : 'ok'}`}>
-              <span>{repairResult.boundaryEdgeCount ? '⚠️' : '✅'}</span>
-              <strong>Boundary edge</strong>
-              <p>{repairResult.boundaryEdgeCount}</p>
-            </div>
-            <div className={`mesh-check-item ${repairResult.degenerateFaceCount ? 'warning' : 'ok'}`}>
-              <span>{repairResult.degenerateFaceCount ? '⚠️' : '✅'}</span>
-              <strong>Degenerate face</strong>
-              <p>{repairResult.degenerateFaceCount}</p>
-            </div>
-            <div className={`mesh-check-item ${repairResult.looseIslandCount ? 'warning' : 'ok'}`}>
-              <span>{repairResult.looseIslandCount ? '⚠️' : '✅'}</span>
-              <strong>Loose island</strong>
-              <p>{repairResult.looseIslandCount}</p>
-            </div>
-            {repairResult.lastMessage && <div className="notice">{repairResult.lastMessage}</div>}
-            {!!repairResult.holeDetails?.length && (
-              <div className="dimension-readout">
-                {repairResult.holeDetails.map((hole) => (
-                  <span key={hole.index}>破洞 #{hole.index}：{hole.edgeCount} 條邊 {hole.simple ? '' : '（複雜）'}</span>
-                ))}
-              </div>
-            )}
+    <div className="property-stack">
+      <details className="accordion-panel">
+        <summary>列印準備</summary>
+        <section className="printer-card print-prep-card">
+          {disabled && <div className="notice warning-note">請先選取要處理的物件。</div>}
+          <div className="row-fields">
+            <label className="field">
+              <span>細分次數</span>
+              <select value={settings.subdivideIterations} onChange={(event) => onSettingChange('subdivideIterations', Number(event.target.value))}>
+                <option value={1}>1</option>
+                <option value={2}>2</option>
+              </select>
+            </label>
+            <label className="field"><span>平滑強度</span><input type="number" min="0.1" max="1" step="0.1" value={settings.smoothStrength} onChange={(event) => onSettingChange('smoothStrength', event.target.value)} /></label>
           </div>
-        )}
-      </section>
-      <button className="wide-action" onClick={onCheck} disabled={disabled}>檢查模型</button>
-      {results && (
-        <div className="mesh-check-list">
-          {results.map((item) => (
-            <div key={item.label} className={`mesh-check-item ${item.status}`}>
-              <span>{item.status === 'ok' ? '✅' : item.status === 'warning' ? '⚠️' : '❌'}</span>
-              <strong>{item.status === 'ok' ? '正常' : item.status === 'warning' ? '警告' : '錯誤'}</strong>
-              <p>{item.label}</p>
+          <label className="field"><span>平滑次數</span><input type="number" min="1" max="10" step="1" value={settings.smoothIterations} onChange={(event) => onSettingChange('smoothIterations', event.target.value)} /></label>
+          <div className="notice">Remesh 簡化版：讓網格更平均，適合雕刻前整理。</div>
+          <div className="row-fields">
+            <label className="field"><span>目標邊長 mm</span><input type="number" min="0.5" step="0.5" value={settings.remeshEdgeLength} onChange={(event) => onSettingChange('remeshEdgeLength', event.target.value)} /></label>
+            <label className="mini-check toggle-line">
+              <input type="checkbox" checked={settings.remeshKeepVolume} onChange={(event) => onSettingChange('remeshKeepVolume', event.target.checked)} />
+              <span>保持體積</span>
+            </label>
+          </div>
+          <div className="prep-grid">
+            <button onClick={onSubdivide} disabled={disabled}>套用細分</button>
+            <button onClick={onSmooth} disabled={disabled}>平滑模型</button>
+            <button onClick={onRemesh} disabled={disabled}>重建網格</button>
+            <button onClick={onRecalculate} disabled={disabled}>重新計算法線</button>
+            <button onClick={onPlace} disabled={disabled}>貼齊平台</button>
+            <button onClick={onCenter} disabled={disabled}>置中到平台</button>
+            <button onClick={onApplyTransform} disabled={disabled}>套用變形</button>
+          </div>
+        </section>
+      </details>
+
+      <details className="accordion-panel" open>
+        <summary>網格修復</summary>
+        <section className="printer-card">
+          <label className="field">
+            <span>合併容差 mm</span>
+            <input type="number" min="0.0001" step="0.001" value={repairSettings.tolerance} onChange={(event) => onRepairSettingChange('tolerance', event.target.value)} />
+          </label>
+          <div className="prep-grid">
+            <button onClick={onFindHoles} disabled={disabled}>尋找破洞</button>
+            <button onClick={onFillHoles} disabled={disabled}>補洞</button>
+            <button onClick={onMergeCloseVertices} disabled={disabled}>合併接近頂點</button>
+            <button onClick={onRemoveDegenerateFaces} disabled={disabled}>移除退化面</button>
+            <button onClick={onRemoveLooseFaces} disabled={disabled}>移除孤立面</button>
+            <button onClick={onRecalculate} disabled={disabled}>重新計算法線</button>
+            <button className="primary-action" onClick={onAutoRepair} disabled={disabled}>自動修復</button>
+          </div>
+          {repairResult && (
+            <div className="mesh-repair-results">
+              <div className={'mesh-check-item ' + (repairResult.holeCount ? 'warning' : 'ok')}><strong>破洞數量</strong><p>{repairResult.holeCount}</p></div>
+              <div className={'mesh-check-item ' + (repairResult.boundaryEdgeCount ? 'warning' : 'ok')}><strong>邊界邊</strong><p>{repairResult.boundaryEdgeCount}</p></div>
+              <div className={'mesh-check-item ' + (repairResult.degenerateFaceCount ? 'warning' : 'ok')}><strong>退化面</strong><p>{repairResult.degenerateFaceCount}</p></div>
+              <div className={'mesh-check-item ' + (repairResult.looseIslandCount ? 'warning' : 'ok')}><strong>孤立面群</strong><p>{repairResult.looseIslandCount}</p></div>
+              {repairResult.lastMessage && <div className="notice">{repairResult.lastMessage}</div>}
+              {!!repairResult.holeDetails?.length && (
+                <div className="dimension-readout">
+                  {repairResult.holeDetails.map((hole) => (
+                    <span key={hole.index}>破洞 #{hole.index}：{hole.edgeCount} 條邊 {hole.simple ? '' : '（複雜）'}</span>
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
-        </div>
-      )}
-    </section>
+          )}
+        </section>
+      </details>
+
+      <details className="accordion-panel" open>
+        <summary>模型檢查</summary>
+        <section className="printer-card">
+          <div className="nested-tool">
+            <div className="card-title">平面裁切</div>
+            <div className="row-fields">
+              <label className="field"><span>裁切軸</span><select value={planeCutSettings.axis} onChange={(event) => onPlaneCutSettingChange('axis', event.target.value)}><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select></label>
+              <label className="field"><span>位置 mm</span><input type="number" step="1" value={planeCutSettings.position} onChange={(event) => onPlaneCutSettingChange('position', event.target.value)} /></label>
+            </div>
+            <label className="field"><span>保留方向</span><select value={planeCutSettings.keep} onChange={(event) => onPlaneCutSettingChange('keep', event.target.value)}><option value="positive">正向</option><option value="negative">負向</option></select></label>
+            <button className="wide-action" onClick={onPlaneCut} disabled={disabled}>套用裁切</button>
+          </div>
+          <button className="wide-action primary-action" onClick={onCheck} disabled={disabled}>檢查模型</button>
+          {results && (
+            <div className="mesh-check-list">
+              {results.map((item) => (
+                <div key={item.label} className={'mesh-check-item ' + item.status}>
+                  <strong>{item.status === 'ok' ? '正常' : item.status === 'warning' ? '警告' : '錯誤'}</strong>
+                  <p>{item.label}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </details>
+    </div>
   );
 }
 
 function FaceEditPanel({ faceSelection, settings, onSettingChange, onPull, onPush, onExtrude, onReverseExtrude, onInsetExtrude, onSmooth }) {
   return (
     <div className="property-stack">
-      <section className="printer-card face-edit-card">
-        <div className="card-title">面編輯</div>
-        {faceSelection ? (
-          <>
-            <div className="status-row ok"><span>目前選取</span><strong>Face #{faceSelection.faceIndex}</strong></div>
-            <div className="dimension-readout">
-              <span>法線 X：{faceSelection.normal.x}</span>
-              <span>法線 Y：{faceSelection.normal.y}</span>
-              <span>法線 Z：{faceSelection.normal.z}</span>
-            </div>
-          </>
-        ) : (
-          <div className="empty-state compact"><Move3D size={28} /><p>請點選模型表面</p></div>
-        )}
+      <details className="accordion-panel" open>
+        <summary>面編輯</summary>
+        <section className="printer-card face-edit-card">
+          {faceSelection ? (
+            <>
+              <div className="status-row ok"><span>目前選取</span><strong>Face #{faceSelection.faceIndex}</strong></div>
+              <div className="dimension-readout">
+                <span>法線 X：{faceSelection.normal.x}</span>
+                <span>法線 Y：{faceSelection.normal.y}</span>
+                <span>法線 Z：{faceSelection.normal.z}</span>
+              </div>
+            </>
+          ) : (
+            <div className="empty-state compact"><Move3D size={28} /><p>請點選模型表面</p></div>
+          )}
+        </section>
+      </details>
 
-        <section className="nested-tool">
-          <div className="card-title">擠出工具</div>
+      <details className="accordion-panel" open>
+        <summary>擠出工具</summary>
+        <section className="printer-card">
+          <div className="notice">選取一個面後，沿法線方向產生新的凸起或凹陷。</div>
           <label className="field"><span>擠出距離 mm</span><input type="number" step="1" min="0.1" value={settings.extrudeDistance} onChange={(event) => onSettingChange('extrudeDistance', event.target.value)} /></label>
           <div className="action-grid">
-            <button onClick={onExtrude} disabled={!faceSelection}>擠出</button>
+            <button className="primary-action" onClick={onExtrude} disabled={!faceSelection}>擠出</button>
             <button onClick={onReverseExtrude} disabled={!faceSelection}>反向擠出</button>
           </div>
           <button className="wide-action" onClick={onInsetExtrude} disabled title="第一版先支援 triangle extrude">內縮擠出</button>
         </section>
+      </details>
 
-        <section className="nested-tool">
-          <div className="card-title">局部變形</div>
+      <details className="accordion-panel">
+        <summary>局部變形</summary>
+        <section className="printer-card">
           <label className="field"><span>拉起距離 mm</span><input type="number" step="1" min="0.1" value={settings.distance} onChange={(event) => onSettingChange('distance', event.target.value)} /></label>
           <label className="field"><span>影響範圍 mm</span><input type="number" step="1" min="0.5" value={settings.radius} onChange={(event) => onSettingChange('radius', event.target.value)} /></label>
           <label className="mini-check toggle-line">
@@ -3578,49 +3678,66 @@ function FaceEditPanel({ faceSelection, settings, onSettingChange, onPull, onPus
           </div>
           <button className="wide-action" onClick={onSmooth} disabled={!faceSelection}>平滑選取區域</button>
         </section>
-      </section>
+      </details>
     </div>
   );
 }
 
 function SculptPanel({ settings, onSettingChange, hasSelection }) {
+  const brushLabels = {
+    raise: '推起',
+    lower: '壓下',
+    smooth: '平滑',
+    inflate: '膨脹',
+    flatten: '壓平',
+  };
   return (
     <div className="property-stack">
-      <section className="printer-card sculpt-card">
-        <div className="card-title">雕刻模式</div>
-        {!hasSelection && <div className="notice warning-note">請先選取要雕刻的物件。</div>}
-        <label className="field">
-          <span>筆刷</span>
-          <select value={settings.brushMode} onChange={(event) => onSettingChange('brushMode', event.target.value)}>
-            <option value="raise">Raise 推起</option>
-            <option value="lower">Lower 壓下</option>
-            <option value="smooth">Smooth 平滑</option>
-            <option value="inflate">Inflate 膨脹</option>
-            <option value="flatten">Flatten 壓平</option>
-          </select>
-        </label>
-        <div className="row-fields">
-          <label className="field"><span>半徑 mm</span><input type="number" step="1" min="1" value={settings.radius} onChange={(event) => onSettingChange('radius', event.target.value)} /></label>
-          <label className="field"><span>強度</span><input type="number" step="0.05" min="0" max="1" value={settings.strength} onChange={(event) => onSettingChange('strength', event.target.value)} /></label>
-        </div>
-        <label className="field">
-          <span>衰減 Falloff</span>
-          <select value={settings.falloff} onChange={(event) => onSettingChange('falloff', event.target.value)}>
-            <option value="smooth">Smooth</option>
-            <option value="linear">Linear</option>
-          </select>
-        </label>
-        <div className="row-fields">
-          {axes.map((axis) => (
-            <label key={axis} className="mini-check toggle-line">
-              <input type="checkbox" checked={settings[`symmetry${axis.toUpperCase()}`]} onChange={(event) => onSettingChange(`symmetry${axis.toUpperCase()}`, event.target.checked)} />
-              <span>{axis.toUpperCase()} 對稱</span>
-            </label>
-          ))}
-        </div>
-        <div className="notice">按住滑鼠左鍵在模型表面拖曳，即可雕刻。</div>
-        <div className="notice">熱鍵：[ / ] 調整半徑，- / = 調整強度。</div>
-      </section>
+      <details className="accordion-panel" open>
+        <summary>雕刻筆刷</summary>
+        <section className="printer-card sculpt-card">
+          {!hasSelection && <div className="notice warning-note">請先選取要雕刻的物件。</div>}
+          <label className="field">
+            <span>筆刷</span>
+            <select value={settings.brushMode} onChange={(event) => onSettingChange('brushMode', event.target.value)}>
+              {Object.entries(brushLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <div className="row-fields">
+            <label className="field"><span>半徑 mm</span><input type="number" step="1" min="1" value={settings.radius} onChange={(event) => onSettingChange('radius', event.target.value)} /></label>
+            <label className="field"><span>強度</span><input type="number" step="0.05" min="0" max="1" value={settings.strength} onChange={(event) => onSettingChange('strength', event.target.value)} /></label>
+          </div>
+          <label className="field">
+            <span>筆刷衰減</span>
+            <select value={settings.falloff} onChange={(event) => onSettingChange('falloff', event.target.value)}>
+              <option value="smooth">平滑</option>
+              <option value="linear">線性</option>
+            </select>
+          </label>
+        </section>
+      </details>
+
+      <details className="accordion-panel">
+        <summary>對稱設定</summary>
+        <section className="printer-card">
+          <div className="row-fields">
+            {axes.map((axis) => (
+              <label key={axis} className="mini-check toggle-line">
+                <input type="checkbox" checked={settings[`symmetry${axis.toUpperCase()}`]} onChange={(event) => onSettingChange(`symmetry${axis.toUpperCase()}`, event.target.checked)} />
+                <span>{axis.toUpperCase()} 對稱</span>
+              </label>
+            ))}
+          </div>
+        </section>
+      </details>
+
+      <details className="accordion-panel">
+        <summary>筆刷提示</summary>
+        <section className="printer-card">
+          <div className="notice">按住滑鼠左鍵在模型表面拖曳即可變形。</div>
+          <div className="notice">熱鍵：[ / ] 調整半徑，- / = 調整強度。</div>
+        </section>
+      </details>
     </div>
   );
 }
