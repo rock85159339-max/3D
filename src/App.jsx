@@ -42,6 +42,11 @@ import ViewAssistPanel from './components/ViewAssistPanel.jsx';
 import ModeHintOverlay from './components/ModeHintOverlay.jsx';
 import ToolboxPanel from './components/ToolboxPanel.jsx';
 import ScaleFeedbackOverlay from './components/ScaleFeedbackOverlay.jsx';
+import TopAppBar from './components/TopAppBar.jsx';
+import MainIconToolbar from './components/MainIconToolbar.jsx';
+import LeftVerticalToolbar from './components/LeftVerticalToolbar.jsx';
+import ContextToolShelf from './components/ContextToolShelf.jsx';
+import RightInspectorPanel from './components/RightInspectorPanel.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
 import { getRuntimeLabel, openTextFileDesktop, saveTextFileDesktop } from './utils/desktopFileService.js';
@@ -958,6 +963,8 @@ export default function App() {
   const [uiMode, setUiMode] = useState('beginner');
   const [rightPanelTab, setRightPanelTab] = useState('properties');
   const [leftToolTab, setLeftToolTab] = useState('create');
+  const [inspectorTab, setInspectorTab] = useState('object');
+  const [toolShelfCollapsed, setToolShelfCollapsed] = useState(false);
   const [modelingMode, setModelingMode] = useState('object');
   const [edgeSelection, setEdgeSelection] = useState(null);
   const [vertexSelection, setVertexSelection] = useState(null);
@@ -3751,46 +3758,70 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
+  const toolbarPrintObjects = selectedObjects.filter((object) => object.userData.printObject && object.visible !== false && !object.userData.locked);
+  const toolbarSolidCount = toolbarPrintObjects.filter((object) => object.userData.mode !== 'hole').length;
+  const toolbarHoleCount = toolbarPrintObjects.filter((object) => object.userData.mode === 'hole').length;
+  const canToolbarBoolean = toolbarSolidCount >= 1 && toolbarHoleCount >= 1;
+  const canToolbarMerge = toolbarSolidCount >= 2;
+  const resetProject = () => {
+    showToast('\u65b0\u5efa\u5c08\u6848\u4e0b\u4e00\u7248\u6703\u52a0\u5165\uff1b\u76ee\u524d\u53ef\u5148\u522a\u9664\u5168\u90e8\u7269\u4ef6\u6216\u958b\u555f\u7bc4\u4f8b');
+  };
+
   return (
     <main className={`app-shell density-${prefs.density}`} onClick={closeContextMenu}>
-      <TopToolbar>
-        <div className="project-strip">
-          <input className="project-name-input" value={projectName} placeholder="未命名模型" onChange={(event) => setProjectName(event.target.value || '未命名模型')} />
-          <span>{lastAutosave ? `已自動儲存：${lastAutosave}` : '自動儲存已準備'}</span>
-        </div>
-        <div className="toolbar-group">
-          <button onClick={undo} disabled={!historyRef.current.length}>復原 Undo</button>
-          <button onClick={redo} disabled={!redoRef.current.length}>重做 Redo</button>
-          <button className="danger" onClick={deleteSelectedWithConfirm} disabled={!selectedIds.length}><Trash2 size={18} />刪除</button>
-          <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={loadProjectFile} />
-          <button onClick={() => setShowPreferences((value) => !value)}>偏好設定</button>
-        </div>
-        <BeginnerModeToggle value={uiMode} onChange={setUiMode} />
-        <label className="switch-control">
-          <input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />
-          <span>{snapEnabled ? `吸附：${prefs.snapDistance} mm` : '吸附：關'}</span>
-        </label>
-        <label className="select-field">
-          <span>列印機</span>
-          <select value={printerKey} onChange={(event) => setPrinterKey(event.target.value)}>
-            {Object.entries(PRINTERS).map(([key, printer]) => <option key={key} value={key}>{printer.label}</option>)}
-          </select>
-        </label>
-      </TopToolbar>
+      <TopAppBar
+        projectName={projectName}
+        onProjectNameChange={setProjectName}
+        lastAutosave={lastAutosave}
+        canUndo={!!historyRef.current.length}
+        canRedo={!!redoRef.current.length}
+        canDelete={!!selectedIds.length}
+        onUndo={undo}
+        onRedo={redo}
+        onDelete={deleteSelectedWithConfirm}
+        uiMode={uiMode}
+        onUiModeChange={setUiMode}
+        snapEnabled={snapEnabled}
+        snapDistance={prefs.snapDistance}
+        onSnapChange={setSnapEnabled}
+        printerKey={printerKey}
+        printers={PRINTERS}
+        onPrinterChange={setPrinterKey}
+        onPreferences={() => setShowPreferences((value) => !value)}
+      />
 
-      <nav className="workflow-tabs">
-        {visibleWorkflowTabs.map((tab) => {
-          const Icon = tab.icon;
-          return (
-            <button key={tab.key} className={activeWorkflow === tab.key ? 'active' : ''} onClick={() => switchWorkflow(tab.key)}>
-              <Icon size={17} />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </nav>
+      <MainIconToolbar
+        activeWorkflow={activeWorkflow}
+        transformMode={mode}
+        hasSelection={!!selectedIds.length}
+        selectedCount={selectedIds.length}
+        canBoolean={canToolbarBoolean}
+        canMerge={canToolbarMerge}
+        onWorkflow={switchWorkflow}
+        onNew={resetProject}
+        onOpen={loadProjectFromDesktop}
+        onSave={saveProject}
+        onImport={showImportModelStub}
+        onExportStl={() => exportModel('stl')}
+        onExportObj={() => exportModel('obj')}
+        onAddShape={addShape}
+        onAddText={addText}
+        onSetTransformMode={setMode}
+        onCenter={centerSelectedOnPlate}
+        onDrop={dropSelectedToPlate}
+        onSetSolid={() => setSelectedMode('solid')}
+        onSetHole={() => setSelectedMode('hole')}
+        onBoolean={applyHole}
+        onMerge={mergeSelected}
+        onGroup={groupSelected}
+        onUngroup={ungroupSelected}
+        onCheck={() => {
+          setInspectorTab('print');
+          checkSelectedMesh();
+        }}
+      />
 
-      <ModelingModeToolbar value={modelingMode} onChange={switchModelingMode} />
+      <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={loadProjectFile} />
 
       {showGuide && (
         <GuidePanel
@@ -3816,44 +3847,53 @@ export default function App() {
       {autosavePrompt && (
         <section className="autosave-modal" onClick={(event) => event.stopPropagation()}>
           <div className="autosave-card">
-            <strong>偵測到上次未儲存的模型，是否恢復？</strong>
-            <p>{autosavePrompt.time ? `上次自動儲存時間：${autosavePrompt.time}` : '可以恢復上一個自動儲存版本。'}</p>
+            <strong>{'\u5075\u6e2c\u5230\u4e0a\u6b21\u672a\u5132\u5b58\u7684\u6a21\u578b\uff0c\u662f\u5426\u6062\u5fa9\uff1f'}</strong>
+            <p>{autosavePrompt.time ? `\u4e0a\u6b21\u81ea\u52d5\u5132\u5b58\u6642\u9593\uff1a${autosavePrompt.time}` : '\u53ef\u4ee5\u6062\u5fa9\u4e0a\u4e00\u500b\u81ea\u52d5\u5132\u5b58\u7248\u672c\u3002'}</p>
             <div className="quick-start-actions">
-              <button className="primary-action" onClick={restoreAutosave}>恢復</button>
-              <button onClick={ignoreAutosave}>忽略</button>
-              <button className="danger" onClick={clearAutosave}>清除 autosave</button>
+              <button className="primary-action" onClick={restoreAutosave}>{'\u6062\u5fa9'}</button>
+              <button onClick={ignoreAutosave}>{'\u5ffd\u7565'}</button>
+              <button className="danger" onClick={clearAutosave}>{'\u6e05\u9664 autosave'}</button>
             </div>
           </div>
         </section>
       )}
 
-      <LeftPanel>
-        <ToolboxPanel
-          activeTab={leftToolTab}
-          onTabChange={setLeftToolTab}
-          resolution={shapeResolution}
-          resolutionPresets={RESOLUTION_PRESETS}
-          onResolutionChange={updateShapeResolution}
-          shapes={SHAPES}
-          onAddShape={addShape}
-          onAddText={addText}
-          hasSelection={!!selectedIds.length}
-          onCenter={centerSelectedOnPlate}
-          onDrop={dropSelectedToPlate}
-          onRowDuplicate={arrayDuplicate}
-          onMatrixDuplicate={matrixDuplicateStub}
-          onSetHole={() => setSelectedMode('hole')}
-          onSetSolid={() => setSelectedMode('solid')}
-          modelingMode={modelingMode}
-          onModelingModeChange={switchModelingMode}
-          uiMode={uiMode}
-          onSetAdvancedMode={() => setUiMode('advanced')}
-          onOpenRepairTools={() => {
-            setRightPanelTab('repair');
-            switchWorkflow('prep');
-          }}
-        />
-      </LeftPanel>
+      <LeftVerticalToolbar
+        mode={modelingMode}
+        onModeChange={switchModelingMode}
+        measureActive={measureActive}
+        onMeasureToggle={() => setMeasureActive((value) => !value)}
+        onViewTools={() => setInspectorTab('scene')}
+        onSettings={() => setShowPreferences((value) => !value)}
+      />
+
+      <ContextToolShelf
+        collapsed={toolShelfCollapsed}
+        onToggleCollapsed={() => setToolShelfCollapsed((value) => !value)}
+        modelingMode={modelingMode}
+        resolution={shapeResolution}
+        resolutionPresets={RESOLUTION_PRESETS}
+        onResolutionChange={updateShapeResolution}
+        onAddShape={addShape}
+        onAddText={addText}
+        hasSelection={!!selectedIds.length}
+        faceSelection={faceSelection}
+        edgeSelection={edgeSelection}
+        vertexSelection={vertexSelection}
+        sculptSettings={sculptSettings}
+        onSculptSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
+        onCenter={centerSelectedOnPlate}
+        onDrop={dropSelectedToPlate}
+        onRowDuplicate={arrayDuplicate}
+        onMatrixDuplicate={matrixDuplicateStub}
+        onSetSolid={() => setSelectedMode('solid')}
+        onSetHole={() => setSelectedMode('hole')}
+        onExtrude={() => extrudeSelectedFace(1)}
+        onInset={insetExtrudeSelectedFace}
+        onDeleteFace={deleteSelectedFaceStub}
+        onFlipFace={flipSelectedFaceStub}
+        onStub={showToast}
+      />
 
       <section className="viewport-wrap">
         <div className="viewport-hud">
@@ -3874,304 +3914,169 @@ export default function App() {
         )}
       </section>
 
-      <RightPanel>
-        <section className="sidebar-section outliner-section">
-          <div className="sidebar-title"><span>物件列表</span><small>{objects.length} 個物件</small></div>
-          <Outliner
-            objects={objects}
-            selectedIds={selectedIds}
-            onSelect={updateSelection}
-            onRename={renameObject}
-            onToggleVisibility={toggleObjectVisibility}
-            onToggleLock={toggleObjectLock}
-          />
-        </section>
-
-        <section className="sidebar-section properties-section">
-          <div className="sidebar-title"><span>屬性 / 工具設定</span><small>{selectedIds.length} 個已選取</small></div>
-
-          <RightPanelTabs activeTab={rightPanelTab} onTabChange={setRightPanelTab} expertMode={expertMode}>
-            {rightPanelTab === 'properties' && (
-              <div className="property-stack">
-                <SelectionSizeInfo info={selectionSizeInfo} />
-                <ModelingToolPanel
-                  modelingMode={modelingMode}
-                  faceSelection={faceSelection}
-                  edgeSelection={edgeSelection}
-                  vertexSelection={vertexSelection}
-                  sculptSettings={{
-                    tool: sculptSettings.brushMode === 'lower' ? 'push' : sculptSettings.brushMode === 'smooth' ? 'smooth' : 'pull',
-                    radius: sculptSettings.radius,
-                    strength: sculptSettings.strength,
-                  }}
-                  onSculptSettingChange={updateFreeformSculptSetting}
-                  onExtrude={() => extrudeSelectedFace(1)}
-                  onInset={insetExtrudeSelectedFace}
-                  onDeleteFace={deleteSelectedFaceStub}
-                  onFlipFace={flipSelectedFaceStub}
-                  onStub={showToast}
-                />
-                <ViewAssistPanel
-                  settings={viewAssist}
-                  onChange={(key, value) => setViewAssist((settings) => ({ ...settings, [key]: value }))}
-                  onStub={showToast}
-                />
-                <details className="accordion-panel" open>
-                  <summary>物件屬性</summary>
-                  <ObjectPropertiesPanel
-                    selected={selected}
-                    selectedObjects={selectedObjects}
-                    primarySelected={primarySelected}
-                    onUpdate={updateSelected}
-                    onSetMode={setSelectedMode}
-                    onToggleVisibility={toggleObjectVisibility}
-                    onToggleLock={toggleObjectLock}
-                    onDelete={deleteSelectedWithConfirm}
-                  />
-                </details>
-
-                {selected && (
-                  <details className="accordion-panel" open>
-                    <summary>變形與尺寸</summary>
-                    <TransformPanel
-                      selected={selected}
-                      transformSpace={transformSpace}
-                      onTransformSpaceChange={setTransformSpace}
-                      onUpdate={updateSelected}
-                      onApplyTransform={applySelectedTransform}
-                      onDropToPlate={dropSelectedToPlate}
-                      onCenterOnPlate={centerSelectedOnPlate}
-                    />
-                    {selected.shapeType === 'cube' && <BevelFields selected={selected} onChange={updateSelected} />}
-                    {selected.shapeType === 'text' && <TextFields selected={selected} onChange={updateSelected} />}
-                  </details>
-                )}
-
-                <details className="accordion-panel" open>
-                  <summary>常用建模工具</summary>
-                  <ObjectToolsPanel
-                    mode={mode}
-                    setMode={setMode}
-                    multiSelect={multiSelect}
-                    setMultiSelect={setMultiSelect}
-                    selectedCount={selectedIds.length}
-                    selectedObjects={selectedObjects}
-                    primarySelected={primarySelected}
-                    duplicateSelected={duplicateSelected}
-                    deleteSelected={deleteSelectedWithConfirm}
-                    centerSelectedOnPlate={centerSelectedOnPlate}
-                    dropSelectedToPlate={dropSelectedToPlate}
-                    setSelectedMode={setSelectedMode}
-                    mergeSelected={mergeSelected}
-                    applyHole={applyHole}
-                    mirrorSelected={mirrorSelected}
-                    alignSelected={alignSelected}
-                    arraySettings={arraySettings}
-                    setArraySettings={setArraySettings}
-                    arrayDuplicate={arrayDuplicate}
-                    groupSelected={groupSelected}
-                    ungroupSelected={ungroupSelected}
-                    createBooleanTest={createBooleanTest}
-                    measureActive={measureActive}
-                    setMeasureActive={setMeasureActive}
-                    measurePoints={measurePoints}
-                    clearMeasure={() => {
-                      setMeasurePoints([]);
-                      clearMeasureHelper();
-                    }}
-                  />
-                  {booleanMessage && <div className="notice">{booleanMessage}</div>}
-                </details>
-              </div>
-            )}
-
-            {rightPanelTab === 'check' && (
-              <BasicPrintCheckPanel check={basicPrintCheck} selectedCheck={selectedCheck} stats={printStats} />
-            )}
-
-            {rightPanelTab === 'repair' && (
-              expertMode ? (
-                <PrintPrepPanel
-                  settings={printPrepSettings}
-                  onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
-                  onSubdivide={subdivideSelectedModel}
-                  onSmooth={smoothSelectedModel}
-                  onRecalculate={recalculateSelectedNormals}
-                  onRemesh={remeshSelectedModel}
-                  onPlace={placeSelectedOnBed}
-                  onCenter={centerSelectedOnBed}
-                  onApplyTransform={applySelectedTransform}
-                  onCheck={checkSelectedMesh}
-                  planeCutSettings={planeCutSettings}
-                  onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
-                  onPlaneCut={applyPlaneCut}
-                  repairSettings={meshRepairSettings}
-                  onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
-                  onFindHoles={findSelectedHoles}
-                  onFillHoles={fillSelectedHoles}
-                  onMergeCloseVertices={mergeSelectedCloseVertices}
-                  onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
-                  onRemoveLooseFaces={removeSelectedLooseFaces}
-                  onAutoRepair={autoRepairSelectedMesh}
-                  repairResult={meshRepairResult}
-                  results={meshCheckResults}
-                  disabled={!primarySelected}
-                />
-              ) : (
-                <section className="printer-card">
-                  <div className="card-title">修復工具</div>
-                  <div className="notice">修復、雕刻、重新整理網格與表面方向工具屬於進階功能。請切換到「進階模式」後使用。</div>
-                </section>
-              )
-            )}
-          </RightPanelTabs>
-
-          <div className={`legacy-workflow-panels ${activeWorkflow === 'model' ? 'hidden' : ''}`}>
-          {activeWorkflow === 'model' && (
-            <div className="property-stack">
+      <RightInspectorPanel activeTab={inspectorTab} onTabChange={setInspectorTab}>
+        {inspectorTab === 'object' && (
+          <div className="property-stack inspector-stack">
+            <section className="sidebar-section outliner-section inspector-card">
+              <div className="sidebar-title"><span>{'????'}</span><small>{objects.length} {'???'}</small></div>
+              <Outliner
+                objects={objects}
+                selectedIds={selectedIds}
+                onSelect={updateSelection}
+                onRename={renameObject}
+                onToggleVisibility={toggleObjectVisibility}
+                onToggleLock={toggleObjectLock}
+              />
+            </section>
+            <SelectionSizeInfo info={selectionSizeInfo} />
+            <details className="accordion-panel" open>
+              <summary>{'????'}</summary>
+              <ObjectPropertiesPanel
+                selected={selected}
+                selectedObjects={selectedObjects}
+                primarySelected={primarySelected}
+                onUpdate={updateSelected}
+                onSetMode={setSelectedMode}
+                onToggleVisibility={toggleObjectVisibility}
+                onToggleLock={toggleObjectLock}
+                onDelete={deleteSelectedWithConfirm}
+              />
+            </details>
+            {selected && (
               <details className="accordion-panel" open>
-                <summary>物件屬性</summary>
-                <ObjectPropertiesPanel
+                <summary>{'?? / ??'}</summary>
+                <TransformPanel
                   selected={selected}
-                  selectedObjects={selectedObjects}
-                  primarySelected={primarySelected}
+                  transformSpace={transformSpace}
+                  onTransformSpaceChange={setTransformSpace}
                   onUpdate={updateSelected}
-                  onSetMode={setSelectedMode}
-                  onToggleVisibility={toggleObjectVisibility}
-                  onToggleLock={toggleObjectLock}
-                  onDelete={deleteSelectedWithConfirm}
+                  onApplyTransform={applySelectedTransform}
+                  onDropToPlate={dropSelectedToPlate}
+                  onCenterOnPlate={centerSelectedOnPlate}
                 />
+                {selected.shapeType === 'cube' && <BevelFields selected={selected} onChange={updateSelected} />}
+                {selected.shapeType === 'text' && <TextFields selected={selected} onChange={updateSelected} />}
               </details>
-
-              {selected && (
-                <>
-                  <details className="accordion-panel" open>
-                    <summary>變形</summary>
-                    <TransformPanel
-                      selected={selected}
-                      transformSpace={transformSpace}
-                      onTransformSpaceChange={setTransformSpace}
-                      onUpdate={updateSelected}
-                      onApplyTransform={applySelectedTransform}
-                      onDropToPlate={dropSelectedToPlate}
-                      onCenterOnPlate={centerSelectedOnPlate}
-                    />
-                    {selected.shapeType === 'cube' && <BevelFields selected={selected} onChange={updateSelected} />}
-                    {selected.shapeType === 'text' && <TextFields selected={selected} onChange={updateSelected} />}
-                  </details>
-
-                  <details className="accordion-panel">
-                    <summary>物件工具</summary>
-                    <ObjectToolsPanel
-                      mode={mode}
-                      setMode={setMode}
-                      multiSelect={multiSelect}
-                      setMultiSelect={setMultiSelect}
-                      selectedCount={selectedIds.length}
-                      selectedObjects={selectedObjects}
-                      primarySelected={primarySelected}
-                      duplicateSelected={duplicateSelected}
-                      deleteSelected={deleteSelectedWithConfirm}
-                      centerSelectedOnPlate={centerSelectedOnPlate}
-                      dropSelectedToPlate={dropSelectedToPlate}
-                      setSelectedMode={setSelectedMode}
-                      mergeSelected={mergeSelected}
-                      applyHole={applyHole}
-                      mirrorSelected={mirrorSelected}
-                      alignSelected={alignSelected}
-                      arraySettings={arraySettings}
-                      setArraySettings={setArraySettings}
-                      arrayDuplicate={arrayDuplicate}
-                      groupSelected={groupSelected}
-                      ungroupSelected={ungroupSelected}
-                      createBooleanTest={createBooleanTest}
-                      measureActive={measureActive}
-                      setMeasureActive={setMeasureActive}
-                      measurePoints={measurePoints}
-                      clearMeasure={() => {
-                        setMeasurePoints([]);
-                        clearMeasureHelper();
-                      }}
-                    />
-                    {booleanMessage && <div className="notice">{booleanMessage}</div>}
-                  </details>
-
-                  <details className="accordion-panel">
-                    <summary>列印檢查</summary>
-                    <PrintCheckPanel check={selectedCheck} stats={printStats} />
-                  </details>
-                </>
-              )}
-            </div>
-          )}
-
-          {activeWorkflow === 'face' && (
-            <FaceEditPanel
-              faceSelection={faceSelection}
-              settings={faceSettings}
-              onSettingChange={(key, value) => setFaceSettings((settings) => ({ ...settings, [key]: value }))}
-              onPull={() => moveSelectedFace(1)}
-              onPush={() => moveSelectedFace(-1)}
-              onExtrude={() => extrudeSelectedFace(1)}
-              onReverseExtrude={() => extrudeSelectedFace(-1)}
-              onInsetExtrude={insetExtrudeSelectedFace}
-              onSmooth={smoothSelectedFace}
-            />
-          )}
-
-          {activeWorkflow === 'sculpt' && (
-            <SculptPanel
-              settings={sculptSettings}
-              onSettingChange={(key, value) => setSculptSettings((settings) => ({ ...settings, [key]: value }))}
-              hasSelection={!!primarySelected}
-            />
-          )}
-
-          {activeWorkflow === 'prep' && (
-            <PrintPrepPanel
-              settings={printPrepSettings}
-              onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
-              onSubdivide={subdivideSelectedModel}
-              onSmooth={smoothSelectedModel}
-              onRecalculate={recalculateSelectedNormals}
-              onRemesh={remeshSelectedModel}
-              onPlace={placeSelectedOnBed}
-              onCenter={centerSelectedOnBed}
-              onApplyTransform={applySelectedTransform}
-              onCheck={checkSelectedMesh}
-              planeCutSettings={planeCutSettings}
-              onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
-              onPlaneCut={applyPlaneCut}
-              repairSettings={meshRepairSettings}
-              onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
-              onFindHoles={findSelectedHoles}
-              onFillHoles={fillSelectedHoles}
-              onMergeCloseVertices={mergeSelectedCloseVertices}
-              onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
-              onRemoveLooseFaces={removeSelectedLooseFaces}
-              onAutoRepair={autoRepairSelectedMesh}
-              repairResult={meshRepairResult}
-              results={meshCheckResults}
-              disabled={!primarySelected}
-            />
-          )}
-
-          {activeWorkflow === 'export' && (
-            <ExportPanel
-              onCheck={checkSelectedMesh}
-              onPrepareExport={prepareExport}
-              onOpenExample={createExampleScene}
-              onExportStl={() => exportModel('stl')}
-              onExportObj={() => exportModel('obj')}
-              onSave={saveProject}
-              onLoad={loadProjectFromDesktop}
-              hasObjects={objects.length > 0}
-              checkResults={meshCheckResults}
-            />
-          )}
+            )}
           </div>
-        </section>
-      </RightPanel>
+        )}
+
+        {inspectorTab === 'scene' && (
+          <div className="property-stack inspector-stack">
+            <section className="printer-card">
+              <div className="card-title">{'????'}</div>
+              <div className="info-grid">
+                <span>{'??'}</span><strong>mm</strong>
+                <span>{'????'}</span><strong>{printerSize.x} ? {printerSize.y} ? {printerSize.z} mm</strong>
+                <span>{'????'}</span><strong>{prefs.snapDistance} mm</strong>
+              </div>
+            </section>
+            <ViewAssistPanel
+              settings={viewAssist}
+              onChange={(key, value) => setViewAssist((settings) => ({ ...settings, [key]: value }))}
+              onStub={showToast}
+            />
+          </div>
+        )}
+
+        {inspectorTab === 'print' && (
+          <div className="property-stack inspector-stack">
+            <BasicPrintCheckPanel check={basicPrintCheck} selectedCheck={selectedCheck} stats={printStats} />
+            <PrintCheckPanel check={selectedCheck} stats={printStats} />
+            <section className="printer-card">
+              <div className="card-title">{'????'}</div>
+              <div className="notice">{'????????????'}</div>
+            </section>
+          </div>
+        )}
+
+        {inspectorTab === 'modifiers' && (
+          <div className="property-stack inspector-stack">
+            <details className="accordion-panel" open>
+              <summary>{'Boolean / ??'}</summary>
+              <ObjectToolsPanel
+                mode={mode}
+                setMode={setMode}
+                multiSelect={multiSelect}
+                setMultiSelect={setMultiSelect}
+                selectedCount={selectedIds.length}
+                selectedObjects={selectedObjects}
+                primarySelected={primarySelected}
+                duplicateSelected={duplicateSelected}
+                deleteSelected={deleteSelectedWithConfirm}
+                centerSelectedOnPlate={centerSelectedOnPlate}
+                dropSelectedToPlate={dropSelectedToPlate}
+                setSelectedMode={setSelectedMode}
+                mergeSelected={mergeSelected}
+                applyHole={applyHole}
+                mirrorSelected={mirrorSelected}
+                alignSelected={alignSelected}
+                arraySettings={arraySettings}
+                setArraySettings={setArraySettings}
+                arrayDuplicate={arrayDuplicate}
+                groupSelected={groupSelected}
+                ungroupSelected={ungroupSelected}
+                createBooleanTest={createBooleanTest}
+                measureActive={measureActive}
+                setMeasureActive={setMeasureActive}
+                measurePoints={measurePoints}
+                clearMeasure={() => {
+                  setMeasurePoints([]);
+                  clearMeasureHelper();
+                }}
+              />
+              {booleanMessage && <div className="notice">{booleanMessage}</div>}
+            </details>
+            {expertMode ? (
+              <PrintPrepPanel
+                settings={printPrepSettings}
+                onSettingChange={(key, value) => setPrintPrepSettings((settings) => ({ ...settings, [key]: value }))}
+                onSubdivide={subdivideSelectedModel}
+                onSmooth={smoothSelectedModel}
+                onRecalculate={recalculateSelectedNormals}
+                onRemesh={remeshSelectedModel}
+                onPlace={placeSelectedOnBed}
+                onCenter={centerSelectedOnBed}
+                onApplyTransform={applySelectedTransform}
+                onCheck={checkSelectedMesh}
+                planeCutSettings={planeCutSettings}
+                onPlaneCutSettingChange={(key, value) => setPlaneCutSettings((settings) => ({ ...settings, [key]: value }))}
+                onPlaneCut={applyPlaneCut}
+                repairSettings={meshRepairSettings}
+                onRepairSettingChange={(key, value) => setMeshRepairSettings((settings) => ({ ...settings, [key]: value }))}
+                onFindHoles={findSelectedHoles}
+                onFillHoles={fillSelectedHoles}
+                onMergeCloseVertices={mergeSelectedCloseVertices}
+                onRemoveDegenerateFaces={removeSelectedDegenerateFaces}
+                onRemoveLooseFaces={removeSelectedLooseFaces}
+                onAutoRepair={autoRepairSelectedMesh}
+                repairResult={meshRepairResult}
+                results={meshCheckResults}
+                disabled={!primarySelected}
+              />
+            ) : (
+              <section className="printer-card">
+                <div className="card-title">{'?????'}</div>
+                <div className="notice">{'Remesh??????????????????????'}</div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {inspectorTab === 'history' && (
+          <div className="property-stack inspector-stack">
+            <section className="printer-card">
+              <div className="card-title">{'????'}</div>
+              <div className="info-grid">
+                <span>{'Undo'}</span><strong>{historyRef.current.length ? '??' : '?'}</strong>
+                <span>{'Redo'}</span><strong>{redoRef.current.length ? '??' : '?'}</strong>
+                <span>{'????'}</span><strong>{selectedIds.length}</strong>
+              </div>
+              <div className="notice">{'??????????????????? / ???'}</div>
+            </section>
+          </div>
+        )}
+      </RightInspectorPanel>
       <StatusBar
         workflow={activeWorkflow}
         editMode={editMode}
