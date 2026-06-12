@@ -44,6 +44,7 @@ import ToolboxPanel from './components/ToolboxPanel.jsx';
 import ScaleFeedbackOverlay from './components/ScaleFeedbackOverlay.jsx';
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js';
 import { APP_INFO, APP_VERSION } from './data/changelog.js';
+import { getRuntimeLabel, openTextFileDesktop, saveTextFileDesktop } from './utils/desktopFileService.js';
 import { applyCameraView, applyOrbitControlStyle, focusCameraOnBox as focusCameraOnBoxUtil, toggleCameraProjectionFov } from './utils/cameraUtils.js';
 import {
   analyzeMeshRepairGeometry,
@@ -1705,6 +1706,18 @@ export default function App() {
   function runSafe(label, action) {
     try {
       return action();
+    } catch (error) {
+      console.error(`${label} failed`, error);
+      const message = `${label} 失敗：${error.message || '未知錯誤'}`;
+      recordError(message);
+      showToast(message);
+      return null;
+    }
+  }
+
+  async function runSafeAsync(label, action) {
+    try {
+      return await action();
     } catch (error) {
       console.error(`${label} failed`, error);
       const message = `${label} 失敗：${error.message || '未知錯誤'}`;
@@ -3626,11 +3639,11 @@ export default function App() {
     object.geometry = makeTextMesh(object.userData.textSettings, new THREE.Color(object.userData.color || '#f8fafc')).geometry;
   }
 
-  function exportModel(format) {
-    return runSafe(`匯出 ${format.toUpperCase()}`, () => {
+  async function exportModel(format) {
+    return runSafeAsync(`\u532f\u51fa ${format.toUpperCase()}`, async () => {
       detachSelectionGroup();
       if (!objectsRef.current.length) {
-        showToast('沒有可匯出的物件');
+        showToast('\u6c92\u6709\u53ef\u532f\u51fa\u7684\u7269\u4ef6');
         return;
       }
       if (format === 'stl') {
@@ -3639,28 +3652,58 @@ export default function App() {
         setMeshCheckResults(results);
         const hasError = results.some((item) => item.status === 'error');
         const hasWarning = results.some((item) => item.status === 'warning');
-        if (hasError && !window.confirm('模型檢查發現嚴重錯誤，仍要匯出 STL 嗎？')) {
+        if (hasError && !window.confirm('\u6a21\u578b\u6aa2\u67e5\u767c\u73fe\u56b4\u91cd\u932f\u8aa4\uff0c\u4ecd\u8981\u532f\u51fa STL \u55ce\uff1f')) {
           switchWorkflow('export');
-          showToast('已取消匯出 STL');
+          showToast('\u5df2\u53d6\u6d88\u532f\u51fa STL');
           return;
         }
-        if (!hasError && hasWarning) showToast('模型有警告，仍允許匯出 STL');
+        if (!hasError && hasWarning) showToast('\u6a21\u578b\u6709\u8b66\u544a\uff0c\u4ecd\u5141\u8a31\u532f\u51fa STL');
       }
       const group = new THREE.Group();
       objectsRef.current.filter((object) => object.userData.mode !== 'hole').forEach((object) => group.add(object.clone(true)));
       group.updateMatrixWorld(true);
       const exporter = format === 'obj' ? new OBJExporter() : new STLExporter();
       const data = format === 'obj' ? exporter.parse(group) : exporter.parse(group, { binary: false });
-      const blob = new Blob([data], { type: format === 'obj' ? 'text/plain' : 'model/stl' });
-      downloadBlob(blob, `print-model.${format}`);
-      showToast(format === 'stl' ? 'STL 已匯出，可放入切片軟體。' : `已匯出 ${format.toUpperCase()}`);
+      const savedInDesktop = await saveTextFileDesktop(`print-model.${format}`, data);
+      if (savedInDesktop === null) {
+        showToast('\u5df2\u53d6\u6d88\u5132\u5b58');
+        return;
+      }
+      if (savedInDesktop === false) {
+        const blob = new Blob([data], { type: format === 'obj' ? 'text/plain' : 'model/stl' });
+        downloadBlob(blob, `print-model.${format}`);
+      }
+      showToast(format === 'stl' ? 'STL \u5df2\u532f\u51fa\uff0c\u53ef\u653e\u5165\u5207\u7247\u8edf\u9ad4\u3002' : `\u5df2\u532f\u51fa ${format.toUpperCase()}`);
     });
   }
 
-  function saveProject() {
+  async function saveProject() {
     detachSelectionGroup();
     const payload = makeProjectPayload();
-    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'print-model-project.json');
+    const data = JSON.stringify(payload, null, 2);
+    const savedInDesktop = await saveTextFileDesktop('print-model-project.json', data);
+    if (savedInDesktop === null) {
+      showToast('\u5df2\u53d6\u6d88\u5132\u5b58');
+      return;
+    }
+    if (savedInDesktop === false) {
+      downloadBlob(new Blob([data], { type: 'application/json' }), 'print-model-project.json');
+    }
+    showToast('\u5df2\u5132\u5b58\u5c08\u6848 JSON');
+  }
+
+  async function loadProjectFromDesktop() {
+    const result = await openTextFileDesktop('print-model-project.json');
+    if (!result) {
+      fileInputRef.current?.click();
+      return;
+    }
+    if (result.canceled) return;
+    runSafe('\u8f09\u5165 JSON', () => {
+      const data = JSON.parse(result.contents);
+      loadProjectData(data);
+      showToast('\u5df2\u8f09\u5165\u5c08\u6848');
+    });
   }
 
   function loadProjectFile(event) {
@@ -3668,10 +3711,10 @@ export default function App() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      runSafe('載入 JSON', () => {
+      runSafe('\u8f09\u5165 JSON', () => {
         const data = JSON.parse(reader.result);
         loadProjectData(data);
-        showToast('已載入專案');
+        showToast('\u5df2\u8f09\u5165\u5c08\u6848');
       });
     };
     reader.readAsText(file);
@@ -4100,7 +4143,7 @@ export default function App() {
               onExportStl={() => exportModel('stl')}
               onExportObj={() => exportModel('obj')}
               onSave={saveProject}
-              onLoad={() => fileInputRef.current?.click()}
+              onLoad={loadProjectFromDesktop}
               hasObjects={objects.length > 0}
               checkResults={meshCheckResults}
             />
@@ -4121,6 +4164,7 @@ export default function App() {
         transformSpace={transformSpace}
         appInfo={APP_INFO}
         version={APP_VERSION}
+        runtimeLabel={getRuntimeLabel()}
       />
       {contextMenu && (
         <ContextMenu

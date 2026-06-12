@@ -13,6 +13,7 @@ export default function StatusBar({
   transformSpace,
   appInfo,
   version,
+  runtimeLabel,
 }) {
   const workflowLabels = {
     model: '建立模型',
@@ -45,7 +46,7 @@ export default function StatusBar({
       ? '框選'
       : toolLabels[mode] || mode;
   const hint = operationStyle === 'maya'
-    ? '提示：左鍵拖曳旋轉視角，滾輪縮放，按住滾輪拖曳平移視角，F 聚焦選取'
+    ? '提示：Alt + 左鍵旋轉，Alt + 中鍵平移，Alt + 右鍵縮放，F 聚焦選取'
     : '提示：左鍵拖曳旋轉視角，滾輪縮放，按住滾輪拖曳平移視角，G/R/S 移動/旋轉/縮放，F 聚焦';
   const appName = appInfo.name === 'Print Modeler' ? '3D 列印建模器' : appInfo.name;
 
@@ -53,6 +54,7 @@ export default function StatusBar({
     <footer className="status-bar">
       <span>{appName} {version}</span>
       <span>{appInfo.repo}</span>
+      <span>執行環境：{runtimeLabel}</span>
       <span>流程：{workflowLabels[workflow] || workflow}</span>
       <span>模式：{modeLabels[editMode] || editMode}</span>
       <span>工具：{tool}</span>
