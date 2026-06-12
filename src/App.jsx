@@ -48,6 +48,10 @@ import {
   runBooleanDifference,
   validateBooleanInput,
 } from './utils/booleanUtils.js';
+import {
+  extrudeTriangleFaceGeometry,
+  insetTriangleFaceGeometry,
+} from './utils/extrudeUtils.js';
 
 const font = new FontLoader().parse(helvetikerFont);
 const MAX_HISTORY = 50;
@@ -901,7 +905,7 @@ export default function App() {
   const [showGuide, setShowGuide] = useState(() => localStorage.getItem('printModeler.hideGuide') !== 'true');
   const [editMode, setEditMode] = useState('object');
   const [faceSelection, setFaceSelection] = useState(null);
-  const [faceSettings, setFaceSettings] = useState({ distance: 5, radius: 20, softEdit: false, smoothStrength: 0.5 });
+  const [faceSettings, setFaceSettings] = useState({ distance: 5, extrudeDistance: 5, radius: 20, softEdit: false, smoothStrength: 0.5 });
   const [shapeResolution, setShapeResolution] = useState('low');
   const [sculptSettings, setSculptSettings] = useState({ brushMode: 'raise', radius: 15, strength: 0.35, falloff: 'smooth', symmetryX: false, symmetryY: false, symmetryZ: false });
   const [printPrepSettings, setPrintPrepSettings] = useState({ subdivideIterations: 1, smoothStrength: 0.35, smoothIterations: 2, remeshEdgeLength: 8, remeshKeepVolume: true });
@@ -2815,6 +2819,48 @@ export default function App() {
     showToast(direction > 0 ? '已向外拉伸面' : '已向內推入面');
   }
 
+  function extrudeSelectedFace(direction = 1) {
+    const face = currentFaceRef.current;
+    if (!face?.mesh) {
+      showToast('請先點選模型表面');
+      return;
+    }
+    const mesh = face.mesh;
+    const geometry = makeEditableGeometry(mesh);
+    if (!geometry?.attributes?.position) {
+      showToast('geometry 沒有 position attribute');
+      clearFaceHelper();
+      return;
+    }
+    const distance = Math.abs(Number(faceSettings.extrudeDistance) || 0) * direction;
+    if (Math.abs(distance) < 0.0001) {
+      showToast('擠出距離不能為 0');
+      return;
+    }
+    const result = extrudeTriangleFaceGeometry(geometry, face.faceIndex, distance);
+    if (!result.geometry) {
+      showToast(result.message || '擠出失敗');
+      clearFaceHelper();
+      return;
+    }
+    pushHistory('face extrude');
+    mesh.geometry.dispose?.();
+    mesh.geometry = result.geometry;
+    updateEditedMesh(mesh);
+    showFaceHelper(mesh, result.faceIndex);
+    showToast(direction > 0 ? '已擠出面' : '已反向擠出面');
+  }
+
+  function insetExtrudeSelectedFace() {
+    const face = currentFaceRef.current;
+    if (!face?.mesh) {
+      showToast('請先點選模型表面');
+      return;
+    }
+    const result = insetTriangleFaceGeometry(face.mesh.geometry, face.faceIndex, 0, Number(faceSettings.extrudeDistance) || 0);
+    showToast(result.message || '內縮擠出尚未支援');
+  }
+
   function smoothSelectedFace() {
     const face = currentFaceRef.current;
     if (!face?.mesh) {
@@ -3105,6 +3151,9 @@ export default function App() {
                 onSettingChange={(key, value) => setFaceSettings((settings) => ({ ...settings, [key]: value }))}
                 onPull={() => moveSelectedFace(1)}
                 onPush={() => moveSelectedFace(-1)}
+                onExtrude={() => extrudeSelectedFace(1)}
+                onReverseExtrude={() => extrudeSelectedFace(-1)}
+                onInsetExtrude={insetExtrudeSelectedFace}
                 onSmooth={smoothSelectedFace}
               />
             </details>
@@ -3486,7 +3535,7 @@ function PrintPrepPanel({
   );
 }
 
-function FaceEditPanel({ faceSelection, settings, onSettingChange, onPull, onPush, onSmooth }) {
+function FaceEditPanel({ faceSelection, settings, onSettingChange, onPull, onPush, onExtrude, onReverseExtrude, onInsetExtrude, onSmooth }) {
   return (
     <div className="property-stack">
       <section className="printer-card face-edit-card">
@@ -3503,18 +3552,32 @@ function FaceEditPanel({ faceSelection, settings, onSettingChange, onPull, onPus
         ) : (
           <div className="empty-state compact"><Move3D size={28} /><p>請點選模型表面</p></div>
         )}
-        <label className="field"><span>拉伸距離 mm</span><input type="number" step="1" min="0.1" value={settings.distance} onChange={(event) => onSettingChange('distance', event.target.value)} /></label>
-        <label className="field"><span>影響範圍 mm</span><input type="number" step="1" min="0.5" value={settings.radius} onChange={(event) => onSettingChange('radius', event.target.value)} /></label>
-        <label className="mini-check toggle-line">
-          <input type="checkbox" checked={settings.softEdit} onChange={(event) => onSettingChange('softEdit', event.target.checked)} />
-          <span>軟編輯：{settings.softEdit ? '開' : '關'}</span>
-        </label>
-        <label className="field"><span>平滑強度</span><input type="number" step="0.1" min="0" max="1" value={settings.smoothStrength} onChange={(event) => onSettingChange('smoothStrength', event.target.value)} /></label>
-        <div className="action-grid">
-          <button onClick={onPull} disabled={!faceSelection}>向外拉伸</button>
-          <button onClick={onPush} disabled={!faceSelection}>向內推入</button>
-        </div>
-        <button className="wide-action" onClick={onSmooth} disabled={!faceSelection}>平滑選取區域</button>
+
+        <section className="nested-tool">
+          <div className="card-title">擠出工具</div>
+          <label className="field"><span>擠出距離 mm</span><input type="number" step="1" min="0.1" value={settings.extrudeDistance} onChange={(event) => onSettingChange('extrudeDistance', event.target.value)} /></label>
+          <div className="action-grid">
+            <button onClick={onExtrude} disabled={!faceSelection}>擠出</button>
+            <button onClick={onReverseExtrude} disabled={!faceSelection}>反向擠出</button>
+          </div>
+          <button className="wide-action" onClick={onInsetExtrude} disabled title="第一版先支援 triangle extrude">內縮擠出</button>
+        </section>
+
+        <section className="nested-tool">
+          <div className="card-title">局部變形</div>
+          <label className="field"><span>拉起距離 mm</span><input type="number" step="1" min="0.1" value={settings.distance} onChange={(event) => onSettingChange('distance', event.target.value)} /></label>
+          <label className="field"><span>影響範圍 mm</span><input type="number" step="1" min="0.5" value={settings.radius} onChange={(event) => onSettingChange('radius', event.target.value)} /></label>
+          <label className="mini-check toggle-line">
+            <input type="checkbox" checked={settings.softEdit} onChange={(event) => onSettingChange('softEdit', event.target.checked)} />
+            <span>軟編輯：{settings.softEdit ? '開' : '關'}</span>
+          </label>
+          <label className="field"><span>平滑強度</span><input type="number" step="0.1" min="0" max="1" value={settings.smoothStrength} onChange={(event) => onSettingChange('smoothStrength', event.target.value)} /></label>
+          <div className="action-grid">
+            <button onClick={onPull} disabled={!faceSelection}>局部拉起</button>
+            <button onClick={onPush} disabled={!faceSelection}>局部壓下</button>
+          </div>
+          <button className="wide-action" onClick={onSmooth} disabled={!faceSelection}>平滑選取區域</button>
+        </section>
       </section>
     </div>
   );
