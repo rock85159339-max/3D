@@ -98,22 +98,27 @@ select {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 56px 236px minmax(0, 1fr) 340px;
+  grid-template-columns: 56px 232px minmax(0, 1fr) 320px;
   grid-template-rows: 48px 52px minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
   background: #090d13;
 }
 
+.app-shell.shelf-collapsed {
+  grid-template-columns: 56px 38px minmax(0, 1fr) 320px;
+}
+
 .top-app-bar {
   grid-column: 1 / -1;
   grid-row: 1;
   display: grid;
-  grid-template-columns: minmax(360px, 1fr) auto minmax(360px, 1fr);
+  grid-template-columns: minmax(320px, 1fr) auto minmax(340px, 1fr);
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 6px 10px;
+  height: 48px;
+  padding: 5px 10px;
   border-bottom: 1px solid #1f2a38;
   background: #0d1420;
 }
@@ -179,12 +184,39 @@ select {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 6px 10px;
+  height: 52px;
+  padding: 5px 10px;
   border-bottom: 1px solid #1f2a38;
   background: #101722;
+  scrollbar-color: #334155 #0f1722;
+  scrollbar-width: thin;
+}
+
+.main-icon-toolbar::-webkit-scrollbar,
+.shelf-scroll::-webkit-scrollbar,
+.inspector-content::-webkit-scrollbar,
+.outliner-section .outliner-list::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.main-icon-toolbar::-webkit-scrollbar-track,
+.shelf-scroll::-webkit-scrollbar-track,
+.inspector-content::-webkit-scrollbar-track,
+.outliner-section .outliner-list::-webkit-scrollbar-track {
+  background: #0f1722;
+}
+
+.main-icon-toolbar::-webkit-scrollbar-thumb,
+.shelf-scroll::-webkit-scrollbar-thumb,
+.inspector-content::-webkit-scrollbar-thumb,
+.outliner-section .outliner-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #334155;
 }
 
 .tool-group {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -211,6 +243,7 @@ select {
   display: inline-grid;
   place-items: center;
   width: 34px;
+  min-width: 34px;
   height: 34px;
   border: 1px solid #273244;
   border-radius: 8px;
@@ -288,6 +321,7 @@ select {
 .context-tool-shelf.collapsed {
   align-items: center;
   padding-top: 8px;
+  min-width: 38px;
 }
 
 .shelf-header {
@@ -404,7 +438,7 @@ select {
 }
 
 .project-name-input {
-  width: 190px;
+  width: 170px;
   height: 34px;
   border: 1px solid #334155;
   border-radius: 7px;
@@ -959,6 +993,7 @@ select {
   min-height: 0;
   border-left: 1px solid #1f2a38;
   background: #101722;
+  width: 320px;
 }
 
 .inspector-tabs {
@@ -1000,7 +1035,14 @@ select {
 }
 
 .inspector-card {
-  max-height: 260px;
+  max-height: 240px;
+}
+
+.inspector-card .outliner-list {
+  max-height: 176px;
+  overflow: auto;
+  scrollbar-color: #334155 #0f1722;
+  scrollbar-width: thin;
 }
 
 .viewport-hud {
@@ -2097,7 +2139,7 @@ select:focus {
   bottom: 0;
   z-index: 15;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 12px;
   min-height: 28px;
@@ -2107,10 +2149,17 @@ select:focus {
   background: rgba(12, 18, 28, 0.96);
   font-size: 12px;
   font-weight: 800;
+  overflow: hidden;
 }
 
 .status-bar span {
   white-space: nowrap;
+}
+
+.status-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .density-compact .left-panel,

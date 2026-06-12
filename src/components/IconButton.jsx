@@ -12,7 +12,7 @@ export default function IconButton({
   badge,
   className = '',
 }) {
-  const title = [tooltip || label, shortcut ? `快捷鍵：${shortcut}` : ''].filter(Boolean).join('\n');
+  const title = tooltip || (shortcut ? `${label}（${shortcut}）` : label);
   return (
     <button
       type="button"

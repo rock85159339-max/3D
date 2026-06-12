@@ -22,9 +22,6 @@ import {
   Wrench,
 } from 'lucide-react';
 import './styles.css';
-import LeftPanel from './components/LeftPanel.jsx';
-import RightPanel from './components/RightPanel.jsx';
-import TopToolbar from './components/TopToolbar.jsx';
 import PreferencesPanel from './components/PreferencesPanel.jsx';
 import Outliner from './components/Outliner.jsx';
 import ContextMenu from './components/ContextMenu.jsx';
@@ -32,15 +29,10 @@ import StatusBar from './components/StatusBar.jsx';
 import GuidePanel from './components/GuidePanel.jsx';
 import ViewCube from './components/ViewCube.jsx';
 import BoxSelectOverlay from './components/BoxSelectOverlay.jsx';
-import BeginnerModeToggle from './components/BeginnerModeToggle.jsx';
 import QuickStartCards from './components/QuickStartCards.jsx';
-import RightPanelTabs from './components/RightPanelTabs.jsx';
 import SelectionSizeInfo from './components/SelectionSizeInfo.jsx';
-import ModelingModeToolbar from './components/ModelingModeToolbar.jsx';
-import ModelingToolPanel from './components/ModelingToolPanel.jsx';
 import ViewAssistPanel from './components/ViewAssistPanel.jsx';
 import ModeHintOverlay from './components/ModeHintOverlay.jsx';
-import ToolboxPanel from './components/ToolboxPanel.jsx';
 import ScaleFeedbackOverlay from './components/ScaleFeedbackOverlay.jsx';
 import TopAppBar from './components/TopAppBar.jsx';
 import MainIconToolbar from './components/MainIconToolbar.jsx';
@@ -961,8 +953,6 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [activeWorkflow, setActiveWorkflow] = useState('model');
   const [uiMode, setUiMode] = useState('beginner');
-  const [rightPanelTab, setRightPanelTab] = useState('properties');
-  const [leftToolTab, setLeftToolTab] = useState('create');
   const [inspectorTab, setInspectorTab] = useState('object');
   const [toolShelfCollapsed, setToolShelfCollapsed] = useState(false);
   const [modelingMode, setModelingMode] = useState('object');
@@ -1146,7 +1136,6 @@ export default function App() {
     clearVertexHelper();
     setEdgeSelection(null);
     setVertexSelection(null);
-    setRightPanelTab(nextMode === 'object' ? 'properties' : 'properties');
     if (nextMode === 'object') {
       setEditMode('object');
       switchWorkflow('model');
@@ -3768,7 +3757,7 @@ export default function App() {
   };
 
   return (
-    <main className={`app-shell density-${prefs.density}`} onClick={closeContextMenu}>
+    <main className={`app-shell density-${prefs.density} ${toolShelfCollapsed ? 'shelf-collapsed' : ''}`} onClick={closeContextMenu}>
       <TopAppBar
         projectName={projectName}
         onProjectNameChange={setProjectName}
