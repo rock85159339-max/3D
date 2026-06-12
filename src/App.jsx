@@ -747,6 +747,55 @@ function meshToMergeGeometry(mesh) {
   return geometry;
 }
 
+function meshToBooleanGeometry(mesh) {
+  if (!mesh?.geometry?.attributes?.position) return null;
+  mesh.updateWorldMatrix(true, false);
+  let geometry = mesh.geometry.clone();
+  geometry.applyMatrix4(mesh.matrixWorld);
+  if (geometry.index) geometry = geometry.toNonIndexed();
+  Object.keys(geometry.attributes).forEach((name) => {
+    if (!['position', 'normal', 'uv'].includes(name)) geometry.deleteAttribute(name);
+  });
+  geometry.computeVertexNormals();
+  if (!geometry.attributes.uv) {
+    const uv = new Float32Array(geometry.attributes.position.count * 2);
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  }
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function objectToBooleanGeometry(object) {
+  if (!object) return null;
+  object.updateMatrixWorld(true);
+  const geometries = [];
+  object.traverse((child) => {
+    if (!child.isMesh || child.userData.helper || !child.visible) return;
+    const geometry = meshToBooleanGeometry(child);
+    if (geometry) geometries.push(geometry);
+  });
+  if (!geometries.length) return null;
+  const geometry = geometries.length === 1 ? geometries[0] : mergeGeometries(geometries, false);
+  geometries.forEach((item) => {
+    if (item !== geometry) item.dispose?.();
+  });
+  if (!geometry) return null;
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function geometryToBrush(geometry) {
+  const brush = new Brush(geometry);
+  brush.position.set(0, 0, 0);
+  brush.rotation.set(0, 0, 0);
+  brush.scale.set(1, 1, 1);
+  brush.updateMatrixWorld(true);
+  return brush;
+}
+
 function meshToBrush(mesh) {
   const brush = new Brush(meshToWorldGeometry(mesh), mesh.material?.clone?.() || makeMaterial(0x38bdf8));
   brush.updateMatrixWorld(true);
@@ -1327,7 +1376,7 @@ export default function App() {
 
   function getSelectedPrintObjects() {
     const selectedSet = new Set(selectedIdsRef.current);
-    return objectsRef.current.filter((object) => selectedSet.has(object.uuid) && object.userData.printObject && object.visible !== false);
+    return objectsRef.current.filter((object) => selectedSet.has(object.uuid) && object.userData.printObject && object.visible !== false && !object.userData.locked);
   }
 
   function getSelectedSolidsAndHoles() {
@@ -1343,6 +1392,13 @@ export default function App() {
     const baseName = getShapeDisplayName(type);
     let next = 1;
     const usedNames = new Set([...objectsRef.current.map((object) => object.name), ...reservedNames]);
+    while (usedNames.has(`${baseName} ${next}`)) next += 1;
+    return `${baseName} ${next}`;
+  }
+
+  function getNextNamedObjectName(baseName) {
+    let next = 1;
+    const usedNames = new Set(objectsRef.current.map((object) => object.name));
     while (usedNames.has(`${baseName} ${next}`)) next += 1;
     return `${baseName} ${next}`;
   }
@@ -2300,37 +2356,56 @@ export default function App() {
 
   function applyHole() {
     detachSelectionGroup();
-    const { solids, holes } = getSelectedSolidsAndHoles();
+    const selected = getSelectedPrintObjects();
+    const solids = selected.filter((object) => object.userData.mode !== 'hole');
+    const holes = selected.filter((object) => object.userData.mode === 'hole');
+
+    console.debug('[boolean]', {
+      selected: selected.map((object) => ({ name: object.name, mode: object.userData.mode, type: object.type })),
+      solids: solids.map((object) => object.name),
+      holes: holes.map((object) => object.name),
+    });
+
     if (!solids.length) {
-      setBooleanMessage('請選取一個實體物件作為打洞目標。');
-      showToast('請選取一個實體物件作為打洞目標');
+      setBooleanMessage('\u8acb\u9078\u53d6 1 \u500b Solid \u7269\u4ef6\u4f5c\u70ba\u6253\u6d1e\u76ee\u6a19');
+      showToast('\u8acb\u9078\u53d6 1 \u500b Solid \u7269\u4ef6\u4f5c\u70ba\u6253\u6d1e\u76ee\u6a19');
       return;
     }
     if (!holes.length) {
-      setBooleanMessage('請選取至少一個 Hole 物件作為切割工具。');
-      showToast('請選取至少一個 Hole 物件作為切割工具');
+      setBooleanMessage('\u8acb\u9078\u53d6\u81f3\u5c11 1 \u500b Hole \u7269\u4ef6\u4f5c\u70ba\u5207\u5272\u5de5\u5177');
+      showToast('\u8acb\u9078\u53d6\u81f3\u5c11 1 \u500b Hole \u7269\u4ef6\u4f5c\u70ba\u5207\u5272\u5de5\u5177');
       return;
     }
 
     try {
       pushHistory('boolean');
       const target = solids[0];
-      target.updateMatrixWorld(true);
-      const cutterMeshes = holes.flatMap((object) => {
-        object.updateMatrixWorld(true);
-        return getPrintableMeshes(object);
+      if (solids.length > 1) showToast('\u5df2\u4f7f\u7528\u7b2c\u4e00\u500b Solid \u4f5c\u70ba\u6253\u6d1e\u76ee\u6a19');
+
+      const targetGeometry = objectToBooleanGeometry(target);
+      if (!targetGeometry) throw new Error('No target geometry');
+      let resultBrush = geometryToBrush(targetGeometry);
+
+      holes.forEach((hole) => {
+        const holeGeometry = objectToBooleanGeometry(hole);
+        if (!holeGeometry) throw new Error('No hole geometry: ' + hole.name);
+        const holeBrush = geometryToBrush(holeGeometry);
+        resultBrush = evaluator.evaluate(resultBrush, holeBrush, SUBTRACTION);
+        holeGeometry.dispose?.();
       });
-      const targetMeshes = getPrintableMeshes(target);
-      const targetBrush = csgCombine(targetMeshes, ADDITION);
-      if (!targetBrush || !cutterMeshes.length) throw new Error('缺少可用的 Solid 或 Hole mesh');
-      let resultBrush = targetBrush;
-      cutterMeshes.forEach((mesh) => {
-        resultBrush = evaluator.evaluate(resultBrush, meshToBrush(mesh), SUBTRACTION);
-      });
-      const mesh = createMeshFromGeometry('打洞結果', resultBrush.geometry.clone(), target.userData.color || getPrimaryColor(target));
+
+      const resultGeometry = resultBrush.geometry.clone();
+      resultGeometry.computeVertexNormals();
+      resultGeometry.computeBoundingBox();
+      resultGeometry.computeBoundingSphere();
+
+      const resultName = getNextNamedObjectName('\u6253\u6d1e\u7d50\u679c');
+      const mesh = createMeshFromGeometry(resultName, resultGeometry, target.userData.color || getPrimaryColor(target));
+      mesh.userData.mode = 'solid';
       mesh.position.set(0, 0, 0);
       mesh.rotation.set(0, 0, 0);
       mesh.scale.set(1, 1, 1);
+
       const removedItems = [target, ...holes];
       removedItems.forEach((object) => sceneRef.current.remove(object));
       objectsRef.current = objectsRef.current.filter((object) => !removedItems.includes(object));
@@ -2338,13 +2413,12 @@ export default function App() {
       sceneRef.current.add(mesh);
       refreshObjects();
       attachTransformForSelection([mesh.uuid]);
-      const extraSolidMessage = solids.length > 1 ? '已使用第一個 Solid 作為目標。' : '';
-      setBooleanMessage('布林打洞完成。' + extraSolidMessage);
-      showToast('已套用打洞');
+      setBooleanMessage('\u5e03\u6797\u6253\u6d1e\u5b8c\u6210\u3002');
+      showToast('\u5df2\u5957\u7528\u6253\u6d1e');
     } catch (error) {
       console.error('Boolean Difference failed', error);
-      setBooleanMessage('布林運算失敗：' + error.message);
-      showToast('打洞失敗，請確認 Solid 和 Hole 有重疊');
+      setBooleanMessage('\u5e03\u6797\u904b\u7b97\u5931\u6557\uff1a' + error.message);
+      showToast('\u6253\u6d1e\u5931\u6557\uff1a\u8acb\u78ba\u8a8d Solid \u8207 Hole \u6709\u91cd\u758a');
     }
   }
 
